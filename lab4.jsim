@@ -1,13 +1,9 @@
 *******************************************************************************
-* As with the previous labs, replace this header comment using the following
-* format. (Team name, then members in "Last Name, First Name" format sorted
-* by last name.)
-*
 * LAB #4
-* The Phantom Thieves
-* - Amamiya, Ren
-* - Sakamoto, Ryuji
-* - Takamaki, Ann
+* Happie Squad
+* - Cabrera, Niles
+* - Nellas, Aldrin
+* - Tibayan, Rafael Angelo
 *******************************************************************************
 
 .include "8clocks.jsim"
@@ -18,11 +14,11 @@
 * Plug-in your full adder and 32-bit ripple-carry adder subcircuits here.
 *******************************************************************************
 .subckt fa a b carry_in sum carry
-    Xh1 a b p xor2             
-    Xh2 p carry_in sum xor2    
-    Xh3 a b nab nand2          
-    Xh4 p carry_in npc nand2    
-    Xh5 nab npc carry nand2    
+    Xh1 a b p xor2
+    Xh2 p carry_in sum xor2
+    Xh3 a b nab nand2
+    Xh4 p carry_in npc nand2
+    Xh5 nab npc carry nand2
 .ends
 
 .subckt add32 a[31:0] b[31:0] cin0 sum[31:0] c[31:30]
@@ -34,9 +30,15 @@
 * Your new counter32 subcircuit code should go here.
 *******************************************************************************
 .subckt counter32 reset a[31:0] f[31:0] clk
-  ********
-  * Replace these comments with your code.
-  ********
+    * f + a, with carry-in tied to ground
+    Xadder a[31:0] f[31:0] 0 sum[31:0] dummy_carry[31:30] add32
+
+    * reset=0 -> sum, reset=1 -> 0
+    .connect 0 zero[31:0]
+    Xmux reset#32 sum[31:0] zero[31:0] next[31:0] mux2
+
+    * 32 flip-flops, feeding f back into the adder
+    Xreg next[31:0] clk#32 f[31:0] dreg
 .ends
 
 *******************************************************************************
@@ -112,3 +114,43 @@ Wincr incr[31:0] nrz(0, 5, 50ns, 0ns, 0.001ns, 0.001ns)
 .plot sd(incr[31:0])
 .plot clk1
 .plot sd(reg[31:0])
+
+
+*******************************************************************************
+* GUIDE QUESTIONS
+*
+*   a. Explain the behavior of the 32-bit register output lines, reg[31:0], as it is 
+*   incrementing, decrementing, and resetting. In particular, explain the significant delay 
+*   between when the reset/incr[31:0] values change and when the output displays an updated value.
+*   
+*   ANSWER: First of all, the reg[31:0] comes from 32 edge-triggered flip-flops (dreg), so it changes
+*   only on a rising edge of clk1 (every 10ns). On every edge it loads next = if reset, then 0, or else (incr + reg)
+*
+*    Now, as it is:
+*    - Incrementing: incr=1 or 3 adds 1 or 3 to reg on every edge, so reg
+*      ramps up. incr=0 holds the value
+*    - Decrementing: incr=-1 is 0xFFFFFFFF in two's complement, so
+*      reg + incr = reg - 1 (carry out of bit 31 is discarded) and reg counts
+*      down by 1 per edge
+*    - Resetting: while reset=1 the mux forces next=0, so reg goes to 0 at the next edge, and stays there. 
+*      Before the first reset, reg should be undefined
+*
+*    Then, as to why the output lags reset/incr: the register only samples its input at a
+*    rising clock edge, so a change in reset or incr shows up at the next edge
+*    (up to 10ns later). Its new value must also ripple through
+*    the adder and mux before that edge, and reg appears only after the flip-flop's own delay (tpd=190ps) after the edge.
+*
+*
+*
+*   b. What is stopping you from using a super-fast clock to make a super-fast
+*   counter?
+*
+*   ANSWER: The clock period must be longer than the slowest register-to-register
+*    path, so that every signal settles before the next edge. The ripple-carry adder dominates. Each full adder adds about two gate
+*    delays, so all in all 32 bits adds up to several ns.
+*
+*    If the clock is faster than that, the flip-flops capture the adder output before the carry has finished rippling,
+*    so they store wrong (transient) values (setup-time violation) and the count becomes garbage. Clock skew and the
+*    hold time also limit the speed. A faster adder (like a carry look-ahead adder) or pipelining would allow for a much faster clock.
+*    
+*******************************************************************************
