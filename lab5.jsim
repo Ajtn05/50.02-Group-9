@@ -1,13 +1,9 @@
 *******************************************************************************
-* As with the previous labs, replace this header comment using the following
-* format. (Team name, then members in "Last Name, First Name" format sorted
-* by last name.)
-*
 * LAB #5
 * Group 9
 * - Cabrera, Niles
 * - Nellas, Aldrin
-* - Tibayan, Rafael 
+* - Tibayan, Rafael
 *******************************************************************************
 
 .include "8clocks.jsim"
@@ -15,82 +11,65 @@
 .include "stdcell.jsim"
 
 *******************************************************************************
-* Plug-in your full adder and 32-bit ripple-carry adder subcircuits here.
+* Full adder (from lab 4)
+* sum   = a XOR b XOR carry_in
+* carry = a*b + (a XOR b)*carry_in, built as NAND(NAND(a,b), NAND(p,carry_in))
+*         because by De Morgan, a NAND of two NANDs is an OR of the two ANDs
 *******************************************************************************
 .subckt fa a b carry_in sum carry
-    Xh1 a b p xor2             
-    Xh2 p carry_in sum xor2    
-    Xh3 a b nab nand2          
-    Xh4 p carry_in npc nand2    
-    Xh5 nab npc carry nand2    
+    Xh1 a b p xor2
+    Xh2 p carry_in sum xor2
+    Xh3 a b nab nand2
+    Xh4 p carry_in npc nand2
+    Xh5 nab npc carry nand2
 .ends
 
+*******************************************************************************
+* 32-bit ripple-carry adder (from lab 4)
+* Bit i takes its carry-in from bit i-1's carry-out; bit 0 takes cin0.
+* c[31:30] are exposed because as32 needs them for the overflow flag.
+*******************************************************************************
 .subckt add32 a[31:0] b[31:0] cin0 sum[31:0] c[31:30]
     Xf a[31:0] b[31:0] c[30:0] cin0 sum[31:0] c[31:0] fa
 .ends
 
-
 *******************************************************************************
-* Your new counter32 subcircuit code should go here.
-*******************************************************************************
-.subckt counter32 reset a[31:0] f[31:0] clk
-    Xadd a[31:0] f[31:0] 0 add_output[31:0] c31 c30 add32
-    .connect 0 ground[31:0]
-    .connect reset mux_reset[31:0]
-    .connect clk dreg_clk[31:0]
-    Xmux mux_reset[31:0] add_output[31:0] ground[31:0] mux_output[31:0] mux2
-    Xdreg mux_output[31:0] dreg_clk[31:0] f[31:0] dreg
-.ends
-
-*******************************************************************************
-* Pitfall: DON'T use numbers AND iterators in your node names at the same time,
-*          e.g., temp[31:0] and temp2[31:0] will result in conflicts!
-*
-* Also, you may need to use these statements when making your own counter32:
-*
-* .connect node othernode(s)...
-*  = connects the first node to all the subsequent nodes
-*    - For example, ".connect a b[31:0]" connects a to b31, b30, ..., b0.
-*    - You can also connect nodes directly to ground ("false") by saying
-*      ".connect 0 othernode(s)..."
-*    - You can also connect nodes directly to vdd ("true") by saying
-*      ".connect vdd othernode(s)..."
-*
-* Xid s d0 d1 z mux2
-*  = "mux2" defines a 2-way multiplexer circuit.
-*    - If s = 0, node z is set to the value of node d0.
-*    - If s = 1, node z is set to the value of node d1.
-*    - s, d0, d1 and z are SINGLE BITS. As usual, use iterators to create
-*      several multiplexers at once.
-*    - Note that the reset node of your counter32 is only a single bit
-*      (NOT 32 bits), so to use it with multiple multiplexers, use the form
-*      "node#n" to make n copies of the node, e.g., "reset#32".
-*
-* Xid d clk q dreg
-*  = "dreg" defines a flip-flop register q (a single bit of "memory") and sets
-*    it to the value of another node, d.
-*    - Unlike "connect"-ing nodes, the value only gets stored into q when clk
-*      is doing a rising transition (also known as a "positive edge trigger").
-*    - Hint: You will also need iteration for this since we need a 32-bit
-*      register, which means you will also need to make 32 copies of clk.
-*******************************************************************************
-
-*******************************************************************************
-* Your new as32 subcircuit code should go here.
-* uses one add32 and 32 instances of mux2
-* inputs: a[31:0], b[31:0], op0
+* as32: 32-bit adder/subtractor
+* inputs:  a[31:0], b[31:0], op0 (0 = add, 1 = subtract)
 * outputs: fas[31:0], n, v, z
-* 32-bit NOR operation using only NAND gates can be built by converting each bit position's NOR logic into an equivalent combination of NAND gates, or by cascading 4-bit/1-bit slices across all 32 bits
+*
+* Subtraction: a - b = a + (-b) = a + ~b + 1 (two's complement negation).
+*  - 32 mux2s pick b when op0 = 0 and ~b when op0 = 1.
+*  - op0 also drives add32's carry-in, so subtraction gets its "+1" for free
+*    and addition gets a carry-in of 0. Only one add32 is needed.
+*
+* n (negative): fas31 is the sign bit of a two's complement number, so the
+*   result is negative exactly when fas31 = 1. No gate is needed.
+*
+* v (signed overflow): c31 XOR c30. c30 is the carry into the sign bit and
+*   c31 is the carry out of it. They differ only when the true result does
+*   not fit in 32 bits (pos + pos gave a negative sign, or neg + neg gave a
+*   non-negative sign). When they agree, the sign bit is correct.
+*
+* z (zero): z = NOT(fas31 OR fas30 OR ... OR fas0), so z = 1 only when every
+*   bit is 0. stdcell gates have at most 4 inputs, so this is a 3-level tree
+*   built only from NOR/NAND gates:
+*       - level 1: 8 nor4s,  each 1 when its 4 bits are all 0
+*       - level 2: 2 nand4s, each 1 when its 16-bit half has any nonzero bit
+*       - level 3: 1 nor2,   1 when neither half has a nonzero bit
+*   This is the minimum possible: a gate merges at most 4 signals into 1, so
+*   reducing 32 signals to 1 takes at least ceil(31/3) = 11 gates, and at
+*   least 3 levels since two levels reach only 4 x 4 = 16 inputs.
 *******************************************************************************
 .subckt as32 a[31:0] b[31:0] op0 fas[31:0] n v z
-    .connect op0 mux_op0[31:0]
-
     Xinv b[31:0] b_inverse[31:0] inverter
-    Xmux mux_op0[31:0] b[31:0] b_inverse[31:0] b_selected[31:0] mux2
+    Xmux op0#32 b[31:0] b_inverse[31:0] b_selected[31:0] mux2
+
     Xadd a[31:0] b_selected[31:0] op0 fas[31:0] c31 c30 add32
 
     .connect fas[31] n
     Xv c30 c31 v xor2
+
     Xza fas[31:28] za nor4
     Xzb fas[27:24] zb nor4
     Xzc fas[23:20] zc nor4
@@ -100,46 +79,63 @@
     Xzg fas[7:4]   zg nor4
     Xzh fas[3:0]   zh nor4
 
-    * Each output is 1 when its half contains any nonzero bit.
+
     Xupper za zb zc zd upper_nonzero nand4
     Xlower ze zf zg zh lower_nonzero nand4
 
-    * z is 1 only when both halves are zero.
     Xz upper_nonzero lower_nonzero z nor2
 .ends
+
 *******************************************************************************
-* Your new cmp32 subcircuit code should go here.
-* inputs: n, v, z, op[2:1]
-* outputs: fcmp[31:0]
+* cmp32: 32-bit comparator
+* inputs:  n, v, z from the as32 placed directly before it (computing a - b),
+*          op[2:1]
+* outputs: fcmp[31:0]; only fcmp0 carries the answer, fcmp[31:1] are ground
+*
+*   op2 op1 | fcmp0
+*    0   1  | 1 iff a = b
+*    1   0  | 1 iff a < b
+*    1   1  | 1 iff a <= b
+*
+*   - a = b:  a - b = 0, so check z.
+*   - a < b:  a - b < 0, so normally check n. But if the subtraction overflowed
+*         (v = 1), the sign bit came out flipped and n is wrong. XOR-ing with
+*         v undoes the flip: lt = n XOR v.
+*   - a <= b: (a < b) OR (a = b), so turning on both op bits ORs both checks.
+*
+* fcmp0 = op1*z + op2*lt. The AND-OR is built as NAND-NAND (De Morgan:
+* NAND(NAND(x,y), NAND(p,q)) = x*y + p*q), the same function with smaller,
+* faster gates than and2/or2
 *******************************************************************************
 .subckt cmp32 n v z op[2:1] fcmp[31:0]
     .connect 0 fcmp[31:1]
     Xlt n v lt xor2
-    Xeq op[1] z eq_selected and2
-    Xless op[2] lt lt_selected and2
-    Xresult eq_selected lt_selected fcmp[0] or2
+    Xeq op[1] z eq_n nand2
+    Xless op[2] lt lt_n nand2
+    Xresult eq_n lt_n fcmp[0] nand2
 .ends
 
 *******************************************************************************
-* Finally, it's time to simulate.
-* This circuit block instantiates the counter32 circuit that you just wrote.
-* We pass it a single-bit reset signal, a 32-bit increment value, a 32-bit
-* register, and a clock signal (we just used the JSim-predefined clk1).
+* Chaining: one as32 feeds its n, v, z into one cmp32
+*
+*   op[2:0] | fas[31:0] | fcmp0
+*    xx0    |  a + b    | don't care
+*    001    |  a - b    | don't care
+*    011    |  a - b    | 1 iff a = b
+*    101    |  a - b    | 1 iff a < b
+*    111    |  a - b    | 1 iff a <= b
+*
+* Comparisons need op0 = 1 so that as32 computes a - b for cmp32 to inspect
 *******************************************************************************
 Xas a[31:0] b[31:0] op[0] fas[31:0] n v z as32
 Xcmp n v z op[2:1] fcmp[31:0] cmp32
 
 *******************************************************************************
-* This "reset" waveform sets up a reset signal that has a delayed start
-* and then goes to the next value every 50ns.
-* The values "1 0 0 0 1 0" indicate that the reset signal only turns on twice.
-* (But at which times?)
+* These are the test inputs. Each value is held for 50ns (nrz period), starting at 0ns,
+* so 29 slots x 50ns = 1450ns of simulation. The first data line holds the
+* 14 addition/subtraction tests. Each later line is one comparison test, run
+* three times with op = 3 (=), 5 (<) and 7 (<=).
 *******************************************************************************
-Wreset reset nrz(0, 5, 50ns, 14.8ns, 0.001ns, 0.001ns)
-+ 1 0 0 0 1 0
-
-
-* waveforms for a, b, and op
 Wa a[31:0] nrz(0, 5, 50ns, 0ns, 0.001ns, 0.001ns)
 + 0 0x55555555 0 0x55555555 -1 0 0 0xAAAAAAAA 0 0xAAAAAAAA 1 -1 0x80000000 -1
 + 2 2 2
@@ -164,12 +160,12 @@ Wop op[2:0] nrz(0, 5, 50ns, 0ns, 0.001ns, 0.001ns)
 + 3 5 7
 + 3 5 7
 
-* Arithmetic tests
 .tran 1450ns
 .plot sd(a[31:0])
 .plot sd(b[31:0])
-.plot sd(op[2:0])
+.plot b(op[2:0])
 .plot sd(fas[31:0])
+.plot x(fas[31:0])
 .plot sd(fcmp[31:0])
 .plot n
 .plot v
