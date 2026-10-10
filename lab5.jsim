@@ -1,0 +1,61 @@
+* LAB #5
+* Group 9
+* - Cabrera, Niles
+* - Nellas, Aldrin
+* - Tibayan, Rafael Angelo
+
+.include "8clocks.jsim"
+.include "nominal.jsim"
+.include "stdcell.jsim"
+
+.subckt fa a b carry_in sum carry
+    Xh1 a b p xor2
+    Xh2 p carry_in sum xor2
+    Xh3 a b nab nand2
+    Xh4 p carry_in npc nand2
+    Xh5 nab npc carry nand2
+.ends
+
+.subckt add32 a[31:0] b[31:0] cin0 sum[31:0] c[31:30]
+    Xf a[31:0] b[31:0] c[30:0] cin0 sum[31:0] c[31:0] fa
+.ends
+
+.subckt as32 a[31:0] b[31:0] op0 fas[31:0] n v z
+    Xinv_b b[31:0] not_b[31:0] inverter
+    Xmux op0#32 b[31:0] not_b[31:0] b_operand[31:0] mux2
+    Xadder a[31:0] b_operand[31:0] op0 fas[31:0] cout[31:30] add32
+    .connect fas31 n
+    Xover cout31 cout30 v xor2
+    Xz0 fas[3:0]   z0 nor4
+    Xz1 fas[7:4]   z1 nor4
+    Xz2 fas[11:8]  z2 nor4
+    Xz3 fas[15:12] z3 nor4
+    Xz4 fas[19:16] z4 nor4
+    Xz5 fas[23:20] z5 nor4
+    Xz6 fas[27:24] z6 nor4
+    Xz7 fas[31:28] z7 nor4
+    Xz8 z0 z1 z2 z3 zh1 and4
+    Xz9 z4 z5 z6 z7 zh2 and4
+    Xz10 zh1 zh2 z and2
+.ends
+
+.subckt cmp32 n v z op1 op2 fcmp[31:0]
+    .connect 0 fcmp[31:1]
+    Xlt n v a_lt_b xor2
+    Xle a_lt_b z a_le_b or2
+    Xcmp_mux op1 op2 0 z a_lt_b a_le_b fcmp0 mux4
+.ends
+
+Wa a[31:0] nrz(0, 5, 20ns, 0ns, 0.001ns, 0.001ns) 0x00000000 0x55555555 0x00000000 0x55555555
+Wb b[31:0] nrz(0, 5, 20ns, 0ns, 0.001ns, 0.001ns) 0x00000000 0x00000000 0x55555555 0x55555555
+Wop op[2:0] nrz(0, 5, 20ns, 0ns, 0.001ns, 0.001ns) 0b000 0b001 0b011 0b101 0b111
+
+Xas32 a[31:0] b[31:0] op0 fas[31:0] n v z as32
+Xcmp32 n v z op1 op2 fcmp[31:0] cmp32
+
+.tran 100ns
+.plot sd(a[31:0])
+.plot sd(b[31:0])
+.plot b(op[2:0])
+.plot sd(fas[31:0])
+.plot fcmp0
