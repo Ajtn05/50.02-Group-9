@@ -146,6 +146,45 @@
 * [ ] Implement both directions. Fill vacated bits with 0 for logical
 *     shifts, and with the original a[31] for arithmetic right shifts.
 *******************************************************************************
+.subckt shift32 a[31:0] b[4:0] op[1:0] fshift[31:0]
+    Xrev op[0]#24 a[0:23] a[31:8] x[31:8] mux2
+    Xfill op[1] a[31] fill and2
+
+    Xi16 b[4] nb16 inverter
+    Xi8 b[3] nb8 inverter
+    Xe0 b[4] b[3] e0 nor2
+    Xe8 b[4] nb8 e8 nor2
+    Xe16 nb16 b[3] e16 nor2
+    Xe24 nb16 nb8 e24 nor2
+    Xg24 fill e24 ng24 nand2
+    Xg16 fill b[4] ng16 nand2
+    Xg8 b[4] b[3] fill ng8 oai21
+    Xer op[0] e0 er and2
+    Xel op[0] b[4] b[3] el nor3
+
+    Xu a[24:31] el#8 u[7:0] and2
+    Xt0l a[7:0] er#8 u[7:0] t0[7:0] aoi21
+    Xt0 x[31:8] e0#24 t0[31:8] nand2
+    Xt8 x[31:8] e8#24 t8[23:0] nand2
+    Xt16 x[31:16] e16#16 t16[15:0] nand2
+    Xt24 x[31:24] e24#8 t24[7:0] nand2
+
+    Xy0 t0[7:0] t8[7:0] t16[7:0] t24[7:0] y8[7:0] nand4
+    Xy8 t0[15:8] t8[15:8] t16[15:8] ng24#8 y8[15:8] nand4
+    Xy16 t0[23:16] t8[23:16] ng16#8 y8[23:16] nand3
+    Xy24 t0[31:24] ng8#8 y8[31:24] nand2
+
+    Xs4 b[2]#28 y8[27:0] y8[31:4] y4[27:0] mux2
+    Xi4 b[2] nb4 inverter
+    Xg4 b[2] fill ng4 nand2
+    Xp4 y8[31:28] nb4#4 p4[31:28] nand2
+    Xq4 p4[31:28] ng4#4 y4[31:28] nand2
+
+    Xs2 b[1]#32 y4[31:0] fill#2 y4[31:2] y2[31:0] mux2
+    Xs1 b[0]#32 y2[31:0] fill y2[31:1] y1[31:0] mux2
+
+    Xout op[0]#32 y1[0:31] y1[31:0] fshift[31:0] mux2
+.ends
 
 *******************************************************************************
 * TODO: Part 3 - implement alu32 (Lab 6 PDF, pp. 12-15)
@@ -161,6 +200,23 @@
 *       d0 = fas, d1 = fbool, d2 = fshift, d3 = fcmp.
 *     Thus alufn[5:4] = 00/01/10/11 selects arithmetic/Boolean/shift/compare.
 *******************************************************************************
+.subckt alu32 a[31:0] b[31:0] alufn[5:0] f[31:0]
+    Xas a[31:0] b[31:0] alufn[0] fas[31:0] n v z as32
+    Xcmp n v z alufn[2:1] fcmp[31:0] cmp32
+    Xbool a[31:0] b[31:0] bop[3:0] nfbool[31:0] bool32
+    Xshift a[31:0] b[4:0] alufn[1:0] fshift[31:0] shift32
+
+    Xn5 alufn[5] n5 inverter
+    Xeas alufn[5] alufn[4] eas nor2
+    Xesh n5 alufn[4] esh nor2
+    Xbop alufn[3:0] n5#4 alufn[4]#4 bop[3:0] nand3
+
+    Xtas fas[31:0] eas#32 tas[31:0] nand2
+    Xtsh fshift[31:0] esh#32 tsh[31:0] nand2
+    Xtcmp fcmp[0] alufn[5] alufn[4] tcmp nand3
+    Xf tas[31:1] tsh[31:1] nfbool[31:1] f[31:1] nand3
+    Xf0 tas[0] tsh[0] nfbool[0] tcmp f[0] nand4
+.ends
 
 *******************************************************************************
 * Lab 6 testbench (Lab 6 Submission.pdf, pp. 1-2)
