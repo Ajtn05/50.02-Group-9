@@ -1,5 +1,5 @@
 *******************************************************************************
-* LAB #5
+* LAB #6
 * Group 9
 * - Cabrera, Niles
 * - Nellas, Aldrin
@@ -116,57 +116,77 @@
 .ends
 
 *******************************************************************************
-* Chaining: one as32 feeds its n, v, z into one cmp32
+* TODO: Part 1 - implement bool32 (Lab 6 PDF, pp. 3-6)
+* [ ] Add .subckt bool32 a[31:0] b[31:0] op[3:0] fbool[31:0].
+* [ ] Use 32 instances of stdcell's mux4, one for each pair of a/b bits.
+*     mux4 port order is s0 s1 d0 d1 d2 d3 z: connect a_i to s0,
+*     b_i to s1, and op[0], op[1], op[2], op[3] to d0, d1, d2, d3.
+*     Share the four op bits across all 32 muxes (replicate as needed).
+* [ ] Work out the truth-table settings for XOR, NAND, NOR, and NOT B
+*     from the mini-exercise; check AND with op[3:0] = 1000.
+*******************************************************************************
+
+*******************************************************************************
+* TODO: Part 2 - implement shift32 (Lab 6 PDF, pp. 8-10)
+* [ ] Add .subckt shift32 a[31:0] b[4:0] op[1:0] fshift[31:0].
+* [ ] Support op = 00 (left), 01 (logical right), and 11 (arithmetic right).
+* [ ] Use cascaded mux2 stages for shifts of 16, 8, 4, 2, and 1 bits,
+*     controlled by b[4], b[3], b[2], b[1], and b[0], respectively.
+*     Each stage must select between its unchanged input and shifted input.
+* [ ] Implement both directions. Fill vacated bits with 0 for logical
+*     shifts, and with the original a[31] for arithmetic right shifts.
+*******************************************************************************
+
+*******************************************************************************
+* TODO: Part 3 - implement alu32 (Lab 6 PDF, pp. 12-15)
+* [ ] Add .subckt alu32 a[31:0] b[31:0] alufn[5:0] f[31:0].
+* [ ] Instantiate as32, cmp32, bool32, and shift32 inside alu32.
+*     Feed a/b to as32 and bool32; feed a and b[4:0] to shift32.
+*     Chain as32's n/v/z outputs into cmp32.
+* [ ] Route alufn[0] to as32, alufn[2:1] to cmp32,
+*     alufn[3:0] to bool32, and alufn[1:0] to shift32.
+*     Comparisons require alufn[0] = 1 so that as32 computes a - b.
+* [ ] Use 32 mux4 instances to select f from the four parallel results.
+*     Connect alufn[4] to s0 and alufn[5] to s1; select inputs in order:
+*       d0 = fas, d1 = fbool, d2 = fshift, d3 = fcmp.
+*     Thus alufn[5:4] = 00/01/10/11 selects arithmetic/Boolean/shift/compare.
+*******************************************************************************
+
+*******************************************************************************
+* Lab 6 testbench (Lab 6 Submission.pdf, pp. 1-2)
+* Instantiate exactly one alu32 so that the reported size is for one ALU.
+* TODO: Complete bool32, shift32, and alu32 above before simulating.
+*******************************************************************************
+Xalu a[31:0] b[31:0] alufn[5:0] f[31:0] alu32
+
+*******************************************************************************
+* Required waveforms, copied as-is from the submission specification.
+* A/B: 39 operand pairs, each held for 20ns.
+* alufn: 13 operations, each held for 60ns (three operand pairs per operation).
+* Both sequences cover 780ns, with 0.1ns rise/fall times.
 *
-*   op[2:0] | fas[31:0] | fcmp0
-*    xx0    |  a + b    | don't care
-*    001    |  a - b    | don't care
-*    011    |  a - b    | 1 iff a = b
-*    101    |  a - b    | 1 iff a < b
-*    111    |  a - b    | 1 iff a <= b
-*
-* Comparisons need op0 = 1 so that as32 computes a - b for cmp32 to inspect
+* Operation order:
+*   0 ADD, 1 SUB, 24 AND, 30 OR, 22 XOR, 26 A, 21 NOT A,
+*   32 SHL, 33 SHR, 35 SRA, 51 EQ, 53 LT, 55 LE.
+* TODO: Check the settled f result for all 39 cases and explain the plots
+* and circuit size/efficiency in the group video (maximum 3 minutes).
 *******************************************************************************
-Xas a[31:0] b[31:0] op[0] fas[31:0] n v z as32
-Xcmp n v z op[2:1] fcmp[31:0] cmp32
+Wa a[31:0] nrz(0v,5.0v,20ns,0ns,.1ns,.1ns)
++ -1 0x55555555 0xAAAAAAAA 1 -2 -1 -1 0x55555555 0 -1 0x55555555 0
++ -1 0x55555555 0 -1 0x55555555 0 -1 0x55555555 0 1 -1 -1 0x55555555 0xAAAAAAAA -1
++ 0x55555555 0xAAAAAAAA -1 -1 15 0 -1 15 0 -1 15 0
 
-*******************************************************************************
-* These are the test inputs. Each value is held for 50ns (nrz period), starting at 0ns,
-* so 29 slots x 50ns = 1450ns of simulation. The first data line holds the
-* 14 addition/subtraction tests. Each later line is one comparison test, run
-* three times with op = 3 (=), 5 (<) and 7 (<=).
-*******************************************************************************
-Wa a[31:0] nrz(0, 5, 50ns, 0ns, 0.001ns, 0.001ns)
-+ 0 0x55555555 0 0x55555555 -1 0 0 0xAAAAAAAA 0 0xAAAAAAAA 1 -1 0x80000000 -1
-+ 2 2 2
-+ 0x80000000 0x80000000 0x80000000
-+ 3 3 3
-+ 0x7FFFFFFF 0x7FFFFFFF 0x7FFFFFFF
-+ 3 3 3
+Wb b[31:0] nrz(0v,5.0v,20ns,0ns,.1ns,.1ns)
++ 1 0x55555555 0xAAAAAAAA 1 0 -1 -1 0xAAAAAAAA 0 -1 0xAAAAAAAA 0
++ -1 0xAAAAAAAA 0 -1 0xAAAAAAAA 0 -1 0xAAAAAAAA 0 31 15 0 24 24 31
++ 24 24 31 1 15 -256 1 15 -256 1 15 -256
 
-Wb b[31:0] nrz(0, 5, 50ns, 0ns, 0.001ns, 0.001ns)
-+ 0 0 0x55555555 0x55555555 -1 0 -1 0 0xAAAAAAAA 0xAAAAAAAA -1 1 0x80000000 -1
-+ -3 -3 -3
-+ 2 2 2
-+ 5 5 5
-+ -2 -2 -2
-+ 3 3 3
+Wf alufn[5:0] nrz(0v,5.0v,60ns,0ns,.1ns,.1ns)
++ 0 1 24 30 22 26 21 32 33 35 51 53 55
 
-Wop op[2:0] nrz(0, 5, 50ns, 0ns, 0.001ns, 0.001ns)
-+ 0 0 0 0 0 1 1 0 0 0 0 0 0 1
-+ 3 5 7
-+ 3 5 7
-+ 3 5 7
-+ 3 5 7
-+ 3 5 7
-
-.tran 1450ns
+.tran 780ns
 .plot sd(a[31:0])
 .plot sd(b[31:0])
-.plot b(op[2:0])
-.plot sd(fas[31:0])
-.plot x(fas[31:0])
-.plot sd(fcmp[31:0])
-.plot n
-.plot v
-.plot z
+.plot b(alufn[5:0])
+.plot sd(f[31:0])
+.plot x(f[31:0])
