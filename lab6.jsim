@@ -116,15 +116,25 @@
 .ends
 
 *******************************************************************************
-* TODO: Part 1 - implement bool32 (Lab 6 PDF, pp. 3-6)
-* [ ] Add .subckt bool32 a[31:0] b[31:0] op[3:0] fbool[31:0].
-* [ ] Use 32 instances of stdcell's mux4, one for each pair of a/b bits.
-*     mux4 port order is s0 s1 d0 d1 d2 d3 z: connect a_i to s0,
-*     b_i to s1, and op[0], op[1], op[2], op[3] to d0, d1, d2, d3.
-*     Share the four op bits across all 32 muxes (replicate as needed).
-* [ ] Work out the truth-table settings for XOR, NAND, NOR, and NOT B
-*     from the mini-exercise; check AND with op[3:0] = 1000.
+* bool32: 32-bit bitwise Boolean circuit
+* Each a/b bit-pair selects one of the four truth-table outputs in op.
+* mux4 port order: s0 s1 d0 d1 d2 d3 z.
+* With s0 = a_i and s1 = b_i, fbool_i = op[a_i + 2*b_i].
+*
+* op[3:0]: XOR = 0110, NAND = 0111, NOR = 0001, NOT B = 0011.
+* Other settings include AND = 1000, OR = 1110, A = 1010, NOT A = 0101.
+* The vector instance below expands into 32 parallel mux4 gates.
+* .connect shares each op bit across a bus of 32 mux data inputs.
+* These connections are wire aliases and add no gates.
 *******************************************************************************
+.subckt bool32 a[31:0] b[31:0] op[3:0] fbool[31:0]
+    .connect op[0] d0[31:0]
+    .connect op[1] d1[31:0]
+    .connect op[2] d2[31:0]
+    .connect op[3] d3[31:0]
+
+    Xbool a[31:0] b[31:0] d0[31:0] d1[31:0] d2[31:0] d3[31:0] fbool[31:0] mux4
+.ends
 
 *******************************************************************************
 * TODO: Part 2 - implement shift32 (Lab 6 PDF, pp. 8-10)
@@ -155,7 +165,7 @@
 *******************************************************************************
 * Lab 6 testbench (Lab 6 Submission.pdf, pp. 1-2)
 * Instantiate exactly one alu32 so that the reported size is for one ALU.
-* TODO: Complete bool32, shift32, and alu32 above before simulating.
+* TODO: Complete shift32 and alu32 above before simulating.
 *******************************************************************************
 Xalu a[31:0] b[31:0] alufn[5:0] f[31:0] alu32
 
