@@ -54,8 +54,8 @@
 * z (zero): z = NOT(fas31 OR fas30 OR ... OR fas0), so z = 1 only when every
 *   bit is 0. stdcell gates have at most 4 inputs, so this is a 3-level tree
 *   built only from NOR/NAND gates:
-* - level 1: 8 nor4s,  each 1 when its 4 bits are all 0
-* - level 2: 2 nand4s, each 1 when its 16-bit half has any nonzero bit
+* - level 1: 8 nor4s,   each 1 when its 4 bits are all 0
+* - level 2: 2 nand4s,  each 1 when its 16-bit half has any nonzero bit
 * - level 3: 1 nor2,   1 when neither half has a nonzero bit
 *   This is the minimum possible: a gate merges at most 4 signals into 1, so
 *   reducing 32 signals to 1 takes at least ceil(31/3) = 11 gates, and at
@@ -153,7 +153,7 @@
 *   built as NAND-NAND (Xt* rows, then Xy* rows).
 * - When i+k > 31 the source is the fill bit.
 *   That term is the same for a whole group of bits, so it is built once (ng24, ng16, ng8).
-*   Bits 8-31 then cost 20-47 microns^2 each instead of 54 for two mux2s.
+*   Bits 8-31 then cost 20-47 microns^2 each instead of 54 for 2 mux2s.
 * - Reversed bits x0-x7 are used only once, so each reversal mux and its NAND
 *   merge into one aoi21 + and2 (Xer, Xel, Xu, Xt0l).
 *   That is why Xrev only builds x[31:8].
@@ -162,7 +162,7 @@
 *   shift-by-4 row use a NAND pair with a shared fill term (Xg4, Xp4, Xq4),
 *   which is smaller than a mux2.
 *
-* Size: 5616 microns^2, against 6061 for a plain all-mux2 cascade.
+* Size: 5616 microns^2, against 6061 for a plain all-mux2 cascade
 *******************************************************************************
 .subckt shift32 a[31:0] b[4:0] op[1:0] fshift[31:0]
     Xrev op[0]#24 a[0:23] a[31:8] x[31:8] mux2
@@ -227,11 +227,11 @@
 * - In compare mode every term is off, so f[31:1] = 0 automatically.
 *   f0 adds a fourth term, NAND3(fcmp0, alufn5, alufn4), through a nand4.
 *
-* Size: the select logic is 1155 microns^2, against 2112 for 32 mux4s.
-*   Whole ALU: 13043 microns^2 (14445 with the slide hints taken literally).
-* Speed: the critical path is b0 -> as32 carry chain -> zero detect -> cmp32 -> f0, 5.002 ns.
+* Size: the select logic is 1155 microns^2, against 2112 for 32 mux4s
+*   Whole ALU: 13043 microns^2 (14445 with the slide hints taken literally)
+* Speed: the critical path is b0 -> as32 carry chain -> zero detect -> cmp32 -> f0, 5.002 ns
 *   The select adds only two NAND levels (0.14 ns) after cmp32.
-*   With 32 mux4s the same path is 5.065 ns.
+*   With 32 mux4s the same path is 5.065 ns
 *******************************************************************************
 .subckt alu32 a[31:0] b[31:0] alufn[5:0] f[31:0]
     Xas a[31:0] b[31:0] alufn[0] fas[31:0] n v z as32
@@ -252,7 +252,7 @@
 .ends
 
 *******************************************************************************
-* Lab 6 testbench (Lab 6 Submission.pdf, pp. 1-2)
+* Lab 6 testbench 
 * Instantiate exactly one alu32 so that the reported size is for one ALU.
 *******************************************************************************
 Xalu a[31:0] b[31:0] alufn[5:0] f[31:0] alu32
@@ -264,8 +264,8 @@ Xalu a[31:0] b[31:0] alufn[5:0] f[31:0] alu32
 * Both sequences cover 780ns, with 0.1ns rise/fall times.
 *
 * Operation order:
-* 0 ADD, 1 SUB, 24 AND, 30 OR, 22 XOR, 26 A, 21 NOT A,
-* 32 SHL, 33 SHR, 35 SRA, 51 EQ, 53 LT, 55 LE.
+*   0 ADD, 1 SUB, 24 AND, 30 OR, 22 XOR, 26 A, 21 NOT A,
+*   32 SHL, 33 SHR, 35 SRA, 51 EQ, 53 LT, 55 LE.
 *******************************************************************************
 Wa a[31:0] nrz(0v,5.0v,20ns,0ns,.1ns,.1ns)
 + -1 0x55555555 0xAAAAAAAA 1 -2 -1 -1 0x55555555 0 -1 0x55555555 0
