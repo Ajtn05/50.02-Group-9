@@ -1,9 +1,9 @@
 *******************************************************************************
 * LAB #6
 * Group 9
-* - Cabrera, Niles
-* - Nellas, Aldrin
-* - Tibayan, Rafael
+* Cabrera, Niles
+* Nellas, Aldrin
+* Tibayan, Rafael
 *******************************************************************************
 
 .include "8clocks.jsim"
@@ -79,7 +79,6 @@
     Xzg fas[7:4]   zg nor4
     Xzh fas[3:0]   zh nor4
 
-
     Xupper za zb zc zd upper_nonzero nand4
     Xlower ze zf zg zh lower_nonzero nand4
 
@@ -137,14 +136,13 @@
 .ends
 
 *******************************************************************************
-* TODO: Part 2 - implement shift32 (Lab 6 PDF, pp. 8-10)
-* [ ] Add .subckt shift32 a[31:0] b[4:0] op[1:0] fshift[31:0].
-* [ ] Support op = 00 (left), 01 (logical right), and 11 (arithmetic right).
-* [ ] Use cascaded mux2 stages for shifts of 16, 8, 4, 2, and 1 bits,
-*     controlled by b[4], b[3], b[2], b[1], and b[0], respectively.
-*     Each stage must select between its unchanged input and shifted input.
-* [ ] Implement both directions. Fill vacated bits with 0 for logical
-*     shifts, and with the original a[31] for arithmetic right shifts.
+* Part 2: shift32 (32-bit Shifter)
+* Supports shift left (op=00), logical shift right (op=01), and arithmetic 
+* shift right (op=11).
+* Uses a merged 16 and 8 shift stage built with one-hot NAND-NAND logic, followed by mux2 stages for 4, 2, and 1.
+* For left shifts, it reverses the input, performs a right shift, and reverses 
+* it back to save gates. Vacated bits are filled with 0 for logical shifts, 
+* or the original a[31] sign bit for arithmetic right shifts.
 *******************************************************************************
 .subckt shift32 a[31:0] b[4:0] op[1:0] fshift[31:0]
     Xrev op[0]#24 a[0:23] a[31:8] x[31:8] mux2
@@ -187,18 +185,15 @@
 .ends
 
 *******************************************************************************
-* TODO: Part 3 - implement alu32 (Lab 6 PDF, pp. 12-15)
-* [ ] Add .subckt alu32 a[31:0] b[31:0] alufn[5:0] f[31:0].
-* [ ] Instantiate as32, cmp32, bool32, and shift32 inside alu32.
-*     Feed a/b to as32 and bool32; feed a and b[4:0] to shift32.
-*     Chain as32's n/v/z outputs into cmp32.
-* [ ] Route alufn[0] to as32, alufn[2:1] to cmp32,
-*     alufn[3:0] to bool32, and alufn[1:0] to shift32.
-*     Comparisons require alufn[0] = 1 so that as32 computes a - b.
-* [ ] Use 32 mux4 instances to select f from the four parallel results.
-*     Connect alufn[4] to s0 and alufn[5] to s1; select inputs in order:
-*       d0 = fas, d1 = fbool, d2 = fshift, d3 = fcmp.
-*     Thus alufn[5:4] = 00/01/10/11 selects arithmetic/Boolean/shift/compare.
+* Part 3: alu32 (Arithmetic Logic Unit)
+* Instantiates the as32, cmp32, bool32, and shift32 subcircuits in parallel.
+* alufn[5:4] determines which subcircuit's output is enabled.
+* 00 = as32, 01 = bool32, 10 = shift32, 11 = cmp32.
+* The bool32 uses mux4 gates as programmable Boolean gates, where the d0 to d3 
+* inputs act as a truth table.
+* Rather than using 32 mux4 gates for the final output selection, 
+* this optimized version uses a combination of NAND/NOR gates to merge the 
+* outputs, matching the exact same logic but with faster gate delays. 
 *******************************************************************************
 .subckt alu32 a[31:0] b[31:0] alufn[5:0] f[31:0]
     Xas a[31:0] b[31:0] alufn[0] fas[31:0] n v z as32
@@ -221,7 +216,6 @@
 *******************************************************************************
 * Lab 6 testbench (Lab 6 Submission.pdf, pp. 1-2)
 * Instantiate exactly one alu32 so that the reported size is for one ALU.
-* TODO: Complete shift32 and alu32 above before simulating.
 *******************************************************************************
 Xalu a[31:0] b[31:0] alufn[5:0] f[31:0] alu32
 
@@ -234,8 +228,6 @@ Xalu a[31:0] b[31:0] alufn[5:0] f[31:0] alu32
 * Operation order:
 *   0 ADD, 1 SUB, 24 AND, 30 OR, 22 XOR, 26 A, 21 NOT A,
 *   32 SHL, 33 SHR, 35 SRA, 51 EQ, 53 LT, 55 LE.
-* TODO: Check the settled f result for all 39 cases and explain the plots
-* and circuit size/efficiency in the group video (maximum 3 minutes).
 *******************************************************************************
 Wa a[31:0] nrz(0v,5.0v,20ns,0ns,.1ns,.1ns)
 + -1 0x55555555 0xAAAAAAAA 1 -2 -1 -1 0x55555555 0 -1 0x55555555 0
