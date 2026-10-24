@@ -39,8 +39,8 @@
 * outputs: fas[31:0], n, v, z
 *
 * Subtraction: a - b = a + (-b) = a + ~b + 1 (two's complement negation).
-*  - 32 mux2s pick b when op0 = 0 and ~b when op0 = 1.
-*  - op0 also drives add32's carry-in, so subtraction gets its "+1" for free
+* - 32 mux2s pick b when op0 = 0 and ~b when op0 = 1.
+* - op0 also drives add32's carry-in, so subtraction gets its "+1" for free
 *    and addition gets a carry-in of 0. Only one add32 is needed.
 *
 * n (negative): fas31 is the sign bit of a two's complement number, so the
@@ -54,9 +54,9 @@
 * z (zero): z = NOT(fas31 OR fas30 OR ... OR fas0), so z = 1 only when every
 *   bit is 0. stdcell gates have at most 4 inputs, so this is a 3-level tree
 *   built only from NOR/NAND gates:
-*       - level 1: 8 nor4s,  each 1 when its 4 bits are all 0
-*       - level 2: 2 nand4s, each 1 when its 16-bit half has any nonzero bit
-*       - level 3: 1 nor2,   1 when neither half has a nonzero bit
+* - level 1: 8 nor4s,  each 1 when its 4 bits are all 0
+* - level 2: 2 nand4s, each 1 when its 16-bit half has any nonzero bit
+* - level 3: 1 nor2,   1 when neither half has a nonzero bit
 *   This is the minimum possible: a gate merges at most 4 signals into 1, so
 *   reducing 32 signals to 1 takes at least ceil(31/3) = 11 gates, and at
 *   least 3 levels since two levels reach only 4 x 4 = 16 inputs.
@@ -96,11 +96,11 @@
 *    1   0  | 1 iff a < b
 *    1   1  | 1 iff a <= b
 *
-*   - a = b:  a - b = 0, so check z.
-*   - a < b:  a - b < 0, so normally check n. But if the subtraction overflowed
+*  - a = b:  a - b = 0, so check z.
+*  - a < b:  a - b < 0, so normally check n. But if the subtraction overflowed
 *         (v = 1), the sign bit came out flipped and n is wrong. XOR-ing with
 *         v undoes the flip: lt = n XOR v.
-*   - a <= b: (a < b) OR (a = b), so turning on both op bits ORs both checks.
+*  - a <= b: (a < b) OR (a = b), so turning on both op bits ORs both checks.
 *
 * fcmp0 = op1*z + op2*lt. The AND-OR is built as NAND-NAND (De Morgan:
 * NAND(NAND(x,y), NAND(p,q)) = x*y + p*q), the same function with smaller,
@@ -136,13 +136,33 @@
 .ends
 
 *******************************************************************************
-* Part 2: shift32 (32-bit Shifter)
-* Supports shift left (op=00), logical shift right (op=01), and arithmetic 
-* shift right (op=11).
-* Uses a merged 16 and 8 shift stage built with one-hot NAND-NAND logic, followed by mux2 stages for 4, 2, and 1.
-* For left shifts, it reverses the input, performs a right shift, and reverses 
-* it back to save gates. Vacated bits are filled with 0 for logical shifts, 
-* or the original a[31] sign bit for arithmetic right shifts.
+* shift32: 32-bit shifter
+* inputs:   a[31:0], b[4:0] (shift amount), op[1:0] (00 = shift left, 01 = shift right, 11 = arithmetic shift right)
+* output:   fshift[31:0]
+*
+* Left shifts reuse the right shifter: reverse a, shift right, reverse back. Xrev and Xout are
+*   the two reversal rows (select = op0), so one right
+*   shifter serves all three operations and no second shifter is needed.
+*
+* fill = op1 AND a31 is the bit shifted in at the top:
+*   a31 for SRA, and 0 for SHR and SHL (op1 = 0 for both).
+*
+* Shift by 16 and 8 (b4, b3) is one 4-way stage instead of two mux2 rows:
+* - b4 b3 are decoded into one-hot enables e0, e8, e16, e24 (exactly one is 1), and
+*   y8[i] = x[i]*e0 + x[i+8]*e8 + x[i+16]*e16 + x[i+24]*e24,
+*   built as NAND-NAND (Xt* rows, then Xy* rows).
+* - When i+k > 31 the source is the fill bit.
+*   That term is the same for a whole group of bits, so it is built once (ng24, ng16, ng8).
+*   Bits 8-31 then cost 20-47 microns^2 each instead of 54 for two mux2s.
+* - Reversed bits x0-x7 are used only once, so each reversal mux and its NAND
+*   merge into one aoi21 + and2 (Xer, Xel, Xu, Xt0l).
+*   That is why Xrev only builds x[31:8].
+*
+* Shift by 4, 2, 1 (b2, b1, b0) are ordinary mux2 rows. The 4 fill bits of the
+*   shift-by-4 row use a NAND pair with a shared fill term (Xg4, Xp4, Xq4),
+*   which is smaller than a mux2.
+*
+* Size: 5616 microns^2, against 6061 for a plain all-mux2 cascade.
 *******************************************************************************
 .subckt shift32 a[31:0] b[4:0] op[1:0] fshift[31:0]
     Xrev op[0]#24 a[0:23] a[31:8] x[31:8] mux2
@@ -185,15 +205,33 @@
 .ends
 
 *******************************************************************************
-* Part 3: alu32 (Arithmetic Logic Unit)
-* Instantiates the as32, cmp32, bool32, and shift32 subcircuits in parallel.
-* alufn[5:4] determines which subcircuit's output is enabled.
-* 00 = as32, 01 = bool32, 10 = shift32, 11 = cmp32.
-* The bool32 uses mux4 gates as programmable Boolean gates, where the d0 to d3 
-* inputs act as a truth table.
-* Rather than using 32 mux4 gates for the final output selection, 
-* this optimized version uses a combination of NAND/NOR gates to merge the 
-* outputs, matching the exact same logic but with faster gate delays. 
+* alu32: 32-bit ALU
+* inputs:  a[31:0], b[31:0], alufn[5:0]
+* output:  f[31:0]
+*
+* All four units compute in parallel, and alufn[5:4] picks the result:
+*   00 = as32, 01 = bool32, 10 = shift32, 11 = cmp32.
+* - as32 gets alufn0. Every compare code (x011, x101, x111) has alufn0 = 1,
+* so as32 computes a - b and its n, v, z feed cmp32 directly.
+* - cmp32 gets alufn[2:1], and shift32 gets alufn[1:0].
+*
+* The output is selected without mux4s (one-hot AND-OR built as NAND-NAND):
+* - eas = 1 only when alufn[5:4] = 00, and esh = 1 only when it is 10.
+* - f[i] = NAND3(NAND(fas_i, eas), NAND(fshift_i, esh), nfbool_i)
+*   = fas_i*eas + fshift_i*esh + (bool result, in bool mode only)
+* - bool32's op is bop[k] = NAND3(alufn[k], ~alufn5, alufn4), not alufn[k].
+*   In bool mode bop = ~alufn[3:0], so bool32 outputs the inverted result, which is
+*   the inverted term the final NAND needs.
+*   In every other mode bop = 1111, so bool32 outputs all 1s and drops out.
+*   Four gates do the gating for all 32 bits.
+* - In compare mode every term is off, so f[31:1] = 0 automatically.
+*   f0 adds a fourth term, NAND3(fcmp0, alufn5, alufn4), through a nand4.
+*
+* Size: the select logic is 1155 microns^2, against 2112 for 32 mux4s.
+*   Whole ALU: 13043 microns^2 (14445 with the slide hints taken literally).
+* Speed: the critical path is b0 -> as32 carry chain -> zero detect -> cmp32 -> f0, 5.002 ns.
+*   The select adds only two NAND levels (0.14 ns) after cmp32.
+*   With 32 mux4s the same path is 5.065 ns.
 *******************************************************************************
 .subckt alu32 a[31:0] b[31:0] alufn[5:0] f[31:0]
     Xas a[31:0] b[31:0] alufn[0] fas[31:0] n v z as32
@@ -226,8 +264,8 @@ Xalu a[31:0] b[31:0] alufn[5:0] f[31:0] alu32
 * Both sequences cover 780ns, with 0.1ns rise/fall times.
 *
 * Operation order:
-*   0 ADD, 1 SUB, 24 AND, 30 OR, 22 XOR, 26 A, 21 NOT A,
-*   32 SHL, 33 SHR, 35 SRA, 51 EQ, 53 LT, 55 LE.
+* 0 ADD, 1 SUB, 24 AND, 30 OR, 22 XOR, 26 A, 21 NOT A,
+* 32 SHL, 33 SHR, 35 SRA, 51 EQ, 53 LT, 55 LE.
 *******************************************************************************
 Wa a[31:0] nrz(0v,5.0v,20ns,0ns,.1ns,.1ns)
 + -1 0x55555555 0xAAAAAAAA 1 -2 -1 -1 0x55555555 0 -1 0x55555555 0
