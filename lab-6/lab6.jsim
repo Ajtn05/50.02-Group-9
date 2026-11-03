@@ -1,0 +1,288 @@
+*******************************************************************************
+* LAB #6
+* Group 9
+* Cabrera, Niles
+* Nellas, Aldrin
+* Tibayan, Rafael
+*******************************************************************************
+
+.include "8clocks.jsim"
+.include "nominal.jsim"
+.include "stdcell.jsim"
+
+*******************************************************************************
+* Full adder (from lab 4)
+* sum   = a XOR b XOR carry_in
+* carry = a*b + (a XOR b)*carry_in, built as NAND(NAND(a,b), NAND(p,carry_in))
+*         because by De Morgan, a NAND of two NANDs is an OR of the two ANDs
+*******************************************************************************
+.subckt fa a b carry_in sum carry
+    Xh1 a b p xor2
+    Xh2 p carry_in sum xor2
+    Xh3 a b nab nand2
+    Xh4 p carry_in npc nand2
+    Xh5 nab npc carry nand2
+.ends
+
+*******************************************************************************
+* 32-bit ripple-carry adder (from lab 4)
+* Bit i takes its carry-in from bit i-1's carry-out; bit 0 takes cin0.
+* c[31:30] are exposed because as32 needs them for the overflow flag.
+*******************************************************************************
+.subckt add32 a[31:0] b[31:0] cin0 sum[31:0] c[31:30]
+    Xf a[31:0] b[31:0] c[30:0] cin0 sum[31:0] c[31:0] fa
+.ends
+
+*******************************************************************************
+* as32: 32-bit adder/subtractor
+* inputs:  a[31:0], b[31:0], op0 (0 = add, 1 = subtract)
+* outputs: fas[31:0], n, v, z
+*
+* Subtraction: a - b = a + (-b) = a + ~b + 1 (two's complement negation).
+* - 32 mux2s pick b when op0 = 0 and ~b when op0 = 1.
+* - op0 also drives add32's carry-in, so subtraction gets its "+1" for free
+*    and addition gets a carry-in of 0. Only one add32 is needed.
+*
+* n (negative): fas31 is the sign bit of a two's complement number, so the
+*   result is negative exactly when fas31 = 1. No gate is needed.
+*
+* v (signed overflow): c31 XOR c30. c30 is the carry into the sign bit and
+*   c31 is the carry out of it. They differ only when the true result does
+*   not fit in 32 bits (pos + pos gave a negative sign, or neg + neg gave a
+*   non-negative sign). When they agree, the sign bit is correct.
+*
+* z (zero): z = NOT(fas31 OR fas30 OR ... OR fas0), so z = 1 only when every
+*   bit is 0. stdcell gates have at most 4 inputs, so this is a 3-level tree
+*   built only from NOR/NAND gates:
+* - level 1: 8 nor4s,   each 1 when its 4 bits are all 0
+* - level 2: 2 nand4s,  each 1 when its 16-bit half has any nonzero bit
+* - level 3: 1 nor2,   1 when neither half has a nonzero bit
+*   This is the minimum possible: a gate merges at most 4 signals into 1, so
+*   reducing 32 signals to 1 takes at least ceil(31/3) = 11 gates, and at
+*   least 3 levels since two levels reach only 4 x 4 = 16 inputs.
+*******************************************************************************
+.subckt as32 a[31:0] b[31:0] op0 fas[31:0] n v z
+    Xinv b[31:0] b_inverse[31:0] inverter
+    Xmux op0#32 b[31:0] b_inverse[31:0] b_selected[31:0] mux2
+
+    Xadd a[31:0] b_selected[31:0] op0 fas[31:0] c31 c30 add32
+
+    .connect fas[31] n
+    Xv c30 c31 v xor2
+
+    Xza fas[31:28] za nor4
+    Xzb fas[27:24] zb nor4
+    Xzc fas[23:20] zc nor4
+    Xzd fas[19:16] zd nor4
+    Xze fas[15:12] ze nor4
+    Xzf fas[11:8]  zf nor4
+    Xzg fas[7:4]   zg nor4
+    Xzh fas[3:0]   zh nor4
+
+    Xupper za zb zc zd upper_nonzero nand4
+    Xlower ze zf zg zh lower_nonzero nand4
+
+    Xz upper_nonzero lower_nonzero z nor2
+.ends
+
+*******************************************************************************
+* cmp32: 32-bit comparator
+* inputs:  n, v, z from the as32 placed directly before it (computing a - b),
+*          op[2:1]
+* outputs: fcmp[31:0]; only fcmp0 carries the answer, fcmp[31:1] are ground
+*
+*   op2 op1 | fcmp0
+*    0   1  | 1 iff a = b
+*    1   0  | 1 iff a < b
+*    1   1  | 1 iff a <= b
+*
+*  - a = b:  a - b = 0, so check z.
+*  - a < b:  a - b < 0, so normally check n. But if the subtraction overflowed
+*         (v = 1), the sign bit came out flipped and n is wrong. XOR-ing with
+*         v undoes the flip: lt = n XOR v.
+*  - a <= b: (a < b) OR (a = b), so turning on both op bits ORs both checks.
+*
+* fcmp0 = op1*z + op2*lt. The AND-OR is built as NAND-NAND (De Morgan:
+* NAND(NAND(x,y), NAND(p,q)) = x*y + p*q), the same function with smaller,
+* faster gates than and2/or2
+*******************************************************************************
+.subckt cmp32 n v z op[2:1] fcmp[31:0]
+    .connect 0 fcmp[31:1]
+    Xlt n v lt xor2
+    Xeq op[1] z eq_n nand2
+    Xless op[2] lt lt_n nand2
+    Xresult eq_n lt_n fcmp[0] nand2
+.ends
+
+*******************************************************************************
+* bool32: 32-bit bitwise Boolean circuit
+* Each a/b bit-pair selects one of the four truth-table outputs in op.
+* mux4 port order: s0 s1 d0 d1 d2 d3 z.
+* With s0 = a_i and s1 = b_i, fbool_i = op[a_i + 2*b_i].
+*
+* op[3:0]: XOR = 0110, NAND = 0111, NOR = 0001, NOT B = 0011.
+* Other settings include AND = 1000, OR = 1110, A = 1010, NOT A = 0101.
+* The vector instance below expands into 32 parallel mux4 gates.
+* .connect shares each op bit across a bus of 32 mux data inputs.
+* These connections are wire aliases and add no gates.
+*******************************************************************************
+.subckt bool32 a[31:0] b[31:0] op[3:0] fbool[31:0]
+    .connect op[0] d0[31:0]
+    .connect op[1] d1[31:0]
+    .connect op[2] d2[31:0]
+    .connect op[3] d3[31:0]
+
+    Xbool a[31:0] b[31:0] d0[31:0] d1[31:0] d2[31:0] d3[31:0] fbool[31:0] mux4
+.ends
+
+*******************************************************************************
+* shift32: 32-bit shifter
+* inputs:   a[31:0], b[4:0] (shift amount), op[1:0] (00 = shift left, 01 = shift right, 11 = arithmetic shift right)
+* output:   fshift[31:0]
+*
+* Left shifts reuse the right shifter: reverse a, shift right, reverse back. Xrev and Xout are
+*   the two reversal rows (select = op0), so one right
+*   shifter serves all three operations and no second shifter is needed.
+*
+* fill = op1 AND a31 is the bit shifted in at the top:
+*   a31 for SRA, and 0 for SHR and SHL (op1 = 0 for both).
+*
+* Shift by 16 and 8 (b4, b3) is one 4-way stage instead of two mux2 rows:
+* - b4 b3 are decoded into one-hot enables e0, e8, e16, e24 (exactly one is 1), and
+*   y8[i] = x[i]*e0 + x[i+8]*e8 + x[i+16]*e16 + x[i+24]*e24,
+*   built as NAND-NAND (Xt* rows, then Xy* rows).
+* - When i+k > 31 the source is the fill bit.
+*   That term is the same for a whole group of bits, so it is built once (ng24, ng16, ng8).
+*   Bits 8-31 then cost 20-47 microns^2 each instead of 54 for 2 mux2s.
+* - Reversed bits x0-x7 are used only once, so each reversal mux and its NAND
+*   merge into one aoi21 + and2 (Xer, Xel, Xu, Xt0l).
+*   That is why Xrev only builds x[31:8].
+*
+* Shift by 4, 2, 1 (b2, b1, b0) are ordinary mux2 rows. The 4 fill bits of the
+*   shift-by-4 row use a NAND pair with a shared fill term (Xg4, Xp4, Xq4),
+*   which is smaller than a mux2.
+*
+* Size: 5616 microns^2, against 6061 for a plain all-mux2 cascade
+*******************************************************************************
+.subckt shift32 a[31:0] b[4:0] op[1:0] fshift[31:0]
+    Xrev op[0]#24 a[0:23] a[31:8] x[31:8] mux2
+    Xfill op[1] a[31] fill and2
+
+    Xi16 b[4] nb16 inverter
+    Xi8 b[3] nb8 inverter
+    Xe0 b[4] b[3] e0 nor2
+    Xe8 b[4] nb8 e8 nor2
+    Xe16 nb16 b[3] e16 nor2
+    Xe24 nb16 nb8 e24 nor2
+    Xg24 fill e24 ng24 nand2
+    Xg16 fill b[4] ng16 nand2
+    Xg8 b[4] b[3] fill ng8 oai21
+    Xer op[0] e0 er and2
+    Xel op[0] b[4] b[3] el nor3
+
+    Xu a[24:31] el#8 u[7:0] and2
+    Xt0l a[7:0] er#8 u[7:0] t0[7:0] aoi21
+    Xt0 x[31:8] e0#24 t0[31:8] nand2
+    Xt8 x[31:8] e8#24 t8[23:0] nand2
+    Xt16 x[31:16] e16#16 t16[15:0] nand2
+    Xt24 x[31:24] e24#8 t24[7:0] nand2
+
+    Xy0 t0[7:0] t8[7:0] t16[7:0] t24[7:0] y8[7:0] nand4
+    Xy8 t0[15:8] t8[15:8] t16[15:8] ng24#8 y8[15:8] nand4
+    Xy16 t0[23:16] t8[23:16] ng16#8 y8[23:16] nand3
+    Xy24 t0[31:24] ng8#8 y8[31:24] nand2
+
+    Xs4 b[2]#28 y8[27:0] y8[31:4] y4[27:0] mux2
+    Xi4 b[2] nb4 inverter
+    Xg4 b[2] fill ng4 nand2
+    Xp4 y8[31:28] nb4#4 p4[31:28] nand2
+    Xq4 p4[31:28] ng4#4 y4[31:28] nand2
+
+    Xs2 b[1]#32 y4[31:0] fill#2 y4[31:2] y2[31:0] mux2
+    Xs1 b[0]#32 y2[31:0] fill y2[31:1] y1[31:0] mux2
+
+    Xout op[0]#32 y1[0:31] y1[31:0] fshift[31:0] mux2
+.ends
+
+*******************************************************************************
+* alu32: 32-bit ALU
+* inputs:  a[31:0], b[31:0], alufn[5:0]
+* output:  f[31:0]
+*
+* All four units compute in parallel, and alufn[5:4] picks the result:
+*   00 = as32, 01 = bool32, 10 = shift32, 11 = cmp32.
+* - as32 gets alufn0. Every compare code (x011, x101, x111) has alufn0 = 1,
+* so as32 computes a - b and its n, v, z feed cmp32 directly.
+* - cmp32 gets alufn[2:1], and shift32 gets alufn[1:0].
+*
+* The output is selected without mux4s (one-hot AND-OR built as NAND-NAND):
+* - eas = 1 only when alufn[5:4] = 00, and esh = 1 only when it is 10.
+* - f[i] = NAND3(NAND(fas_i, eas), NAND(fshift_i, esh), nfbool_i)
+*   = fas_i*eas + fshift_i*esh + (bool result, in bool mode only)
+* - bool32's op is bop[k] = NAND3(alufn[k], ~alufn5, alufn4), not alufn[k].
+*   In bool mode bop = ~alufn[3:0], so bool32 outputs the inverted result, which is
+*   the inverted term the final NAND needs.
+*   In every other mode bop = 1111, so bool32 outputs all 1s and drops out.
+*   Four gates do the gating for all 32 bits.
+* - In compare mode every term is off, so f[31:1] = 0 automatically.
+*   f0 adds a fourth term, NAND3(fcmp0, alufn5, alufn4), through a nand4.
+*
+* Size: the select logic is 1155 microns^2, against 2112 for 32 mux4s
+*   Whole ALU: 13043 microns^2 (14445 with the slide hints taken literally)
+* Speed: the critical path is b0 -> as32 carry chain -> zero detect -> cmp32 -> f0, 5.002 ns
+*   The select adds only two NAND levels (0.14 ns) after cmp32.
+*   With 32 mux4s the same path is 5.065 ns
+*******************************************************************************
+.subckt alu32 a[31:0] b[31:0] alufn[5:0] f[31:0]
+    Xas a[31:0] b[31:0] alufn[0] fas[31:0] n v z as32
+    Xcmp n v z alufn[2:1] fcmp[31:0] cmp32
+    Xbool a[31:0] b[31:0] bop[3:0] nfbool[31:0] bool32
+    Xshift a[31:0] b[4:0] alufn[1:0] fshift[31:0] shift32
+
+    Xn5 alufn[5] n5 inverter
+    Xeas alufn[5] alufn[4] eas nor2
+    Xesh n5 alufn[4] esh nor2
+    Xbop alufn[3:0] n5#4 alufn[4]#4 bop[3:0] nand3
+
+    Xtas fas[31:0] eas#32 tas[31:0] nand2
+    Xtsh fshift[31:0] esh#32 tsh[31:0] nand2
+    Xtcmp fcmp[0] alufn[5] alufn[4] tcmp nand3
+    Xf tas[31:1] tsh[31:1] nfbool[31:1] f[31:1] nand3
+    Xf0 tas[0] tsh[0] nfbool[0] tcmp f[0] nand4
+.ends
+
+*******************************************************************************
+* Lab 6 testbench 
+* Instantiate exactly one alu32 so that the reported size is for one ALU.
+*******************************************************************************
+Xalu a[31:0] b[31:0] alufn[5:0] f[31:0] alu32
+
+*******************************************************************************
+* Required waveforms, copied as-is from the submission specification.
+* A/B: 39 operand pairs, each held for 20ns.
+* alufn: 13 operations, each held for 60ns (three operand pairs per operation).
+* Both sequences cover 780ns, with 0.1ns rise/fall times.
+*
+* Operation order:
+*   0 ADD, 1 SUB, 24 AND, 30 OR, 22 XOR, 26 A, 21 NOT A,
+*   32 SHL, 33 SHR, 35 SRA, 51 EQ, 53 LT, 55 LE.
+*******************************************************************************
+Wa a[31:0] nrz(0v,5.0v,20ns,0ns,.1ns,.1ns)
++ -1 0x55555555 0xAAAAAAAA 1 -2 -1 -1 0x55555555 0 -1 0x55555555 0
++ -1 0x55555555 0 -1 0x55555555 0 -1 0x55555555 0 1 -1 -1 0x55555555 0xAAAAAAAA -1
++ 0x55555555 0xAAAAAAAA -1 -1 15 0 -1 15 0 -1 15 0
+
+Wb b[31:0] nrz(0v,5.0v,20ns,0ns,.1ns,.1ns)
++ 1 0x55555555 0xAAAAAAAA 1 0 -1 -1 0xAAAAAAAA 0 -1 0xAAAAAAAA 0
++ -1 0xAAAAAAAA 0 -1 0xAAAAAAAA 0 -1 0xAAAAAAAA 0 31 15 0 24 24 31
++ 24 24 31 1 15 -256 1 15 -256 1 15 -256
+
+Wf alufn[5:0] nrz(0v,5.0v,60ns,0ns,.1ns,.1ns)
++ 0 1 24 30 22 26 21 32 33 35 51 53 55
+
+.tran 780ns
+.plot sd(a[31:0])
+.plot sd(b[31:0])
+.plot b(alufn[5:0])
+.plot sd(f[31:0])
+.plot x(f[31:0])
