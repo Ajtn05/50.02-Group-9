@@ -1,4 +1,4 @@
-* nominal device models for 6.004
+nominal device models for 6.004
 * for CSCI 50.02, vdd and vih were modified to 5v and 4.4v, respectively
 .global vdd
 .temp 25
