@@ -1,40 +1,61 @@
+|||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||
+|
+| LAB #7 - Problem 1: Sum of odd and even numbers
 | Group 9
 | Cabrera, Niles
 | Nellas, Aldrin
 | Tibayan, Rafael
+|
+| Reads N and N array values from INPUT, then writes their odd and even sums
+| to ODDSUM and EVENSUM.
+|
+| Registers:
+|       R0 = values remaining
+|       R1 = current value address
+|       R2 = current value
+|       R3 = odd sum
+|       R4 = even sum
+|       R5 = length or parity flag
+|
+|||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||
 
-.include beta.uasm
+.include beta.uasm          | include the standard predefined macros
 
-    LD(INPUT, R0)           | R0 = number of values remaining
-    CMOVE(INPUT+4, R1)      | R1 = address of the current value
-    CMOVE(0, R3)            | R3 = running sum of odd values
-    CMOVE(0, R4)            | R4 = running sum of even values
-    CMPLEC(R0, 0, R5)       | check if there are still remaining values
-    BT(R5, DONE)            | if there aren't, move to DONE
+    LD(INPUT, R0)           | R0 = N
+    CMOVE(INPUT+4, R1)      | move address of the first array value to R1
+    CMOVE(0, R3)            | ensure odd sum is 0
+    CMOVE(0, R4)            | ensure odd sum is 0
+    CMPLEC(R0, 0, R5)       | R5 = 1 if N <= 0, else 0
+    BT(R5, DONE)            | if N <= 0, skip to end
 
 LOOP:
-    LD(R1, 0, R2)           | R2 = current array value
-    ANDC(R2, 1, R5)         | removes higher bits, leaving rightmost, which is only 1 when rightmost bit of current value is 1, meaning odd
-    BEQ(R5, EVEN)           
-    ADD(R3, R2, R3)
-    BR(NEXT)
+    LD(R1, 0, R2)           | load the current value
+    ANDC(R2, 1, R5)         | since 1 is 0001, using AND zeroes all bits except rightmost bit, which is 0 when current value is even, and 1 when odd 
+    BEQ(R5, EVEN)           | branch to EVEN 
+    ADD(R3, R2, R3)         | add to running odd sum
+    BR(NEXT)                | skip the even addition
 
 EVEN:
-    ADD(R4, R2, R4)
+    ADD(R4, R2, R4)         | add to the running even sum
 
 NEXT:
-    ADDC(R1, 4, R1)         | Advance to the next 32-bit value
-    SUBC(R0, 1, R0)
-    BNE(R0, LOOP)
+    ADDC(R1, 4, R1)         | advance to the next word
+    SUBC(R0, 1, R0)         | subtract from # of values remaining
+    BNE(R0, LOOP)           | if # of values remaining > 0, continue loop
 
 DONE:
-    ST(R3, ODDSUM)
-    ST(R4, EVENSUM)
-    HALT()
+    ST(R3, ODDSUM)          | store the odd sum
+    ST(R4, EVENSUM)         | store the even sum
+    HALT()                  | stop the simulator
 
+|||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||
+
+| Data starts at a fixed address so it is easy to find in the BSim window.
 . = 0x19C
+
+| INPUT holds N followed by N array values.
 INPUT:
-    LONG(7)                | Array length N
+    LONG(7)                | this line holds array length, while the rest are the values
     LONG(5)
     LONG(7)
     LONG(8)
@@ -43,6 +64,7 @@ INPUT:
     LONG(9)
     LONG(3)
 
+| Output sums. 
 ODDSUM:
     LONG(0)
 
