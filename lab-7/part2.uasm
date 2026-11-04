@@ -9,6 +9,12 @@
 | Reads N from INPUT and writes the first N terms of the Fibonacci sequence
 | (0, 1, 1, 2, 3, 5, 8, ...) into consecutive words starting at FIBO.
 |
+| Method:
+|       Each term is the sum of the two before it, and every term is stored
+|       anyway, so two registers carry the last two terms and one pass
+|       produces the whole sequence. Recursion would recompute terms and
+|       need a stack (CALL/RTN, PUSH/POP); this needs neither.
+|
 | Registers:
 |       r0 = terms left to write (starts at N, counts down to 0)
 |       r1 = byte offset into FIBO (0, 4, 8, ...; each LONG is 4 bytes)
@@ -26,6 +32,11 @@
 |       times, storing over all of memory.
 |       F(47) and later overflow a signed 32-bit word and show as negative,
 |       so FIBO reserves 47 words (N <= 47 gives only correct terms).
+|       Labels are used as 16-bit signed constants in LD and ST, so the data
+|       must stay below address 0x8000.
+|
+| In BSim (with the data below): the code uses 0x000-0x037, INPUT is at
+| 0x19C and FIBO starts at 0x1A0
 |
 |||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||
 
@@ -63,6 +74,6 @@ INPUT:
 | 512 bytes). With an empty FIBO label at 0x1A0 memory would end at 0x200,
 | so only 24 terms would fit; N = 25 or more would stop with "ST to invalid
 | memory location". 47 words holds every term that fits in a signed 32-bit
-| word, F(0) through F(46).
+| word, F(0) through F(46)
 FIBO:
         STORAGE(47)
