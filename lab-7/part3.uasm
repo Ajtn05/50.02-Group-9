@@ -1,0 +1,100 @@
+|||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||
+|
+| LAB #7 - Problem 3: In-Place Array Sorting
+| Group 9
+| Cabrera, Niles
+| Nellas, Aldrin
+| Tibayan, Rafael
+|
+| Sorts the N values stored after ARRAY into ascending order, in place,
+| using bubble sort. ARRAY[i] below means the i-th value, the word at
+| ARRAY + 4 + 4i (the length cell itself is at ARRAY).
+|
+| Method (bubble sort):
+|       Each pass walks the unsorted part, comparing neighbours and swapping
+|       any pair that is out of order. After a pass, the largest remaining
+|       value has moved to the end of the unsorted part, so the next pass
+|       checks one value fewer (R0 - 1). Sorting stops early when a pass
+|       makes no swaps (R1 = 0), because the array is then already sorted.
+|
+| Registers:
+|       R0 = size of the unsorted part (starts at N)
+|       R1 = N <= 1 flag at the start, then the swapped flag for each pass
+|       R2 = address of ARRAY[i], the current element
+|       R3 = comparisons left in this pass (starts at R0 - 1)
+|       R4 = ARRAY[i]
+|       R5 = ARRAY[i+1]
+|       R6 = 1 if ARRAY[i] <= ARRAY[i+1] (pair already in order)
+|       R7 = 1 if the unsorted part has 1 or fewer values left
+|
+| Edge cases:
+|       N <= 1 is already sorted, so the program halts right away. The guard
+|       also protects the inner loop, which tests its counter only after the
+|       body runs: with N = 0 or 1, R3 = N - 1 would start at -1 or 0, go
+|       negative, and the loop would compare and swap past the end of the
+|       block.
+|       CMPLE is a signed comparison, so negative numbers sort correctly.
+|       Equal neighbours are not swapped (<=), so duplicates cause no extra
+|       work and equal values keep their order.
+|       Worst case (reverse order) is about N^2/2 comparisons; N = 100 in
+|       reverse order takes about 50,000 instructions in BSim.
+|       Labels are used as 16-bit signed constants in LD and CMOVE, so the
+|       data must stay below address 0x8000.
+|
+| In BSim (with the data below): the code uses 0x000-0x053, the length cell
+| is at 0x19C and the values are at 0x1A0-0x1BB.
+|
+|||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||
+
+.include beta.uasm          | include the standard predefined macros
+
+| Initialization
+LD(R31, ARRAY, R0)      | R0 = N (array length; this cell is only read)
+CMPLEC(R0, 1, R1)       | Check if N <= 1
+BT(R1, DONE)            | If N <= 1, array is already sorted
+
+OUTER_LOOP:
+    CMOVE(0, R1)        | R1 = swapped flag (0 = false)
+    CMOVE(ARRAY+4, R2)  | R2 = address of the first array element
+    SUBC(R0, 1, R3)     | R3 = inner loop counter (R0 - 1 comparisons)
+
+INNER_LOOP:
+    LD(R2, 0, R4)       | R4 = current element (ARRAY[i])
+    LD(R2, 4, R5)       | R5 = next element (ARRAY[i+1])
+
+    CMPLE(R4, R5, R6)   | R6 = 1 if ARRAY[i] <= ARRAY[i+1] (signed)
+    BT(R6, SKIP_SWAP)   | If already in ascending order, skip the swap
+
+    | Swap the elements (the only stores; both stay inside the block)
+    ST(R5, 0, R2)       | ARRAY[i] = R5
+    ST(R4, 4, R2)       | ARRAY[i+1] = R4
+    CMOVE(1, R1)        | Set swapped flag to 1 (true)
+
+SKIP_SWAP:
+    ADDC(R2, 4, R2)     | Advance R2 to the next element address
+    SUBC(R3, 1, R3)     | Decrement the inner loop counter
+    BNE(R3, INNER_LOOP) | If counter != 0, repeat INNER_LOOP
+
+    SUBC(R0, 1, R0)     | Optimization: last element is now sorted, R0--
+    CMPLEC(R0, 1, R7)   | Check if remaining unsorted N <= 1
+    BT(R7, DONE)        | If so, sorting is complete
+    BNE(R1, OUTER_LOOP) | If a swap occurred (R1 == 1), repeat OUTER_LOOP
+
+DONE:
+    HALT()              | stop the simulator
+
+|||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||
+
+| Data starts at a fixed address so it is easy to find in the BSim window.
+. = 0x19C
+
+| ARRAY holds N followed by the N values; the program sorts them in place.
+ARRAY:
+    LONG(7)             | Array length N (never written)
+    LONG(5)
+    LONG(7)
+    LONG(8)
+    LONG(6)
+    LONG(4)
+    LONG(9)
+    LONG(3)

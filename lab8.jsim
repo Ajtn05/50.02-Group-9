@@ -13,7 +13,7 @@
 *******************************************************************************
 * The $memory statement defines a memory device. Each memory device comes with
 * one or more ports, each of which may be used for either reading or writing.
-*
+
 * Usage:
 *   Xid  <port def>
 *   +    <port def>

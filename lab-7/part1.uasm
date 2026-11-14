@@ -1,0 +1,93 @@
+|||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||
+|
+| LAB #7 - Problem 1: Sum of odd and even numbers
+| Group 9
+| Cabrera, Niles
+| Nellas, Aldrin
+| Tibayan, Rafael
+|
+| Reads N and N array values from INPUT, then writes their odd and even sums
+| to ODDSUM and EVENSUM.
+|
+| Registers:
+|       R0 = values remaining (starts at N, counts down to 0)
+|       R1 = address of the current value (INPUT+4, INPUT+8, ...)
+|       R2 = current value
+|       R3 = odd sum
+|       R4 = even sum
+|       R5 = N <= 0 flag at the start, then the current value's parity bit
+|
+| How odd and even are told apart:
+|       ANDC(R2, 1, R5) keeps only bit 0 of the value (1 is ...0001). Bit 0 is
+|       1 for odd numbers and 0 for even ones. This also holds for negative
+|       numbers in two's complement (-3 = ...11101 is odd, -4 = ...11100 is
+|       even), so no division or remainder is needed.
+|
+| Edge cases:
+|       N <= 0 writes 0 to both sums. The loop tests its counter only after
+|       the body runs, so without the guard N = 0 would make R0 = -1, and the
+|       loop would keep reading past the end of memory until BSim stops with
+|       "LD from invalid memory location", never writing the sums. This is
+|       the edge case hinted at in the course's sample program.
+|       R3 and R4 start at 0, so whatever ODDSUM and EVENSUM held before is
+|       overwritten, not added to.
+|       Sums that overflow 32 bits wrap around (modulo 2^32).
+|       Labels are used as 16-bit signed constants in LD, ST and CMOVE, so
+|       the data must stay below address 0x8000.
+|
+| In BSim (with the data below): the code uses 0x000-0x047, INPUT is at
+| 0x19C, ODDSUM at 0x1BC and EVENSUM at 0x1C0.
+|
+|||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||
+
+.include beta.uasm          | include the standard predefined macros
+
+    LD(INPUT, R0)           | R0 = N
+    CMOVE(INPUT+4, R1)      | move address of the first array value to R1
+    CMOVE(0, R3)            | ensure odd sum is 0
+    CMOVE(0, R4)            | ensure even sum is 0
+    CMPLEC(R0, 0, R5)       | R5 = 1 if N <= 0, else 0
+    BT(R5, DONE)            | if N <= 0, skip to end (both sums stay 0)
+
+LOOP:
+    LD(R1, 0, R2)           | load the current value
+    ANDC(R2, 1, R5)         | R5 = bit 0 of the value: 1 if odd, 0 if even
+    BEQ(R5, EVEN)           | bit 0 is 0 (even): branch to EVEN
+    ADD(R3, R2, R3)         | add to running odd sum
+    BR(NEXT)                | skip the even addition
+
+EVEN:
+    ADD(R4, R2, R4)         | add to the running even sum
+
+NEXT:
+    ADDC(R1, 4, R1)         | advance to the next word (each LONG is 4 bytes)
+    SUBC(R0, 1, R0)         | subtract from # of values remaining
+    BNE(R0, LOOP)           | if # of values remaining > 0, continue loop
+
+DONE:
+    ST(R3, ODDSUM)          | store the odd sum (addressed by label only)
+    ST(R4, EVENSUM)         | store the even sum (addressed by label only)
+    HALT()                  | stop the simulator
+
+|||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||
+
+| Data starts at a fixed address so it is easy to find in the BSim window.
+. = 0x19C
+
+| INPUT holds N followed by N array values.
+INPUT:
+    LONG(7)                | array length N; the N values follow
+    LONG(5)
+    LONG(7)
+    LONG(8)
+    LONG(6)
+    LONG(4)
+    LONG(9)
+    LONG(3)
+
+| Output sums. Each label reserves one word that the program overwrites.
+ODDSUM:
+    LONG(0)
+
+EVENSUM:
+    LONG(0)
