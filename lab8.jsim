@@ -49,8 +49,9 @@
 *   2nd line = read port for LD instructions (memrd)
 *   3rd line = write port for ST instructions (memwd, controlled by wr signal)
 *   5th line = the memory statement itself
-* TODO: Copy your Beta program's BSim assembler output (.bin file) to your JSim
-*       folder and change the file= parameter accordingly!
+* Lab 7 application: Problem 2 - Fibonacci Sequence (lab-7/part2.uasm).
+* TODO: Export the Fibonacci program from BSim as lab7.bin and place it in
+*       this folder. Its code/data layout must fit this 512-byte memory.
 *******************************************************************************
 Xmemory  vdd  0    0   pc[8:2]    inst[31:0]
 +        vdd  0    0   mema[8:2]  memrd[31:0]
@@ -76,12 +77,16 @@ Xregisters  vdd  0    0     ra1_[4:0]  rd1_[31:0]
 + )
 
 *******************************************************************************
-* Temporarily connect the control logic werf_ signal directly to werf.
-* TODO: You must replace this with circuitry so that if wa[4:0] = 0b11111 (31),
-*       the werf signal is forced OFF; otherwise, it should pass through the
-*       werf_ signal.
+* R31 must stay zero, so block register writes when wa[4:0] = 0b11111.
+* All registers start at zero in Xregisters; preventing writes preserves R31.
+* Effective write enable: werf = werf_ AND NOT(wa4 AND wa3 AND wa2 AND wa1 AND wa0).
 *******************************************************************************
-.connect werf werf_
+* Detect whether the upper four destination-address bits are all 1.
+Xupper wa[4:1] upper_ones and4
+* Allow a destination only when its full five-bit address is not 11111.
+Xallowed upper_ones wa[0] allow_write nand2
+* Pass the ROM's write request only for destinations R0 through R30.
+Xwerf werf_ allow_write werf and2
 
 *******************************************************************************
 * Xcontrol is a read-only memory (ROM) that defines what to feed into the
@@ -92,28 +97,156 @@ Xregisters  vdd  0    0     ra1_[4:0]  rd1_[31:0]
 *   2nd line = the memory statement itself
 *   succeeding lines = the control signals (14 bits each) for all 64 opcodes
 *                      times 2 (first half is for z = 0, second half for z = 1)
-* TODO: Fill these lines with the proper control signals for each opcode!
+* Control word order: PCSEL | RA2SEL | BSEL | WDSEL | ALUFN | Wr | WERF_.
+* Field widths:          2       1      1       2       6     1     1.
+* PCSEL: 00 = PC+4, 01 = PC+4+4*C, 10 = jump to RD1, 11 = hold PC.
+* RA2SEL: 0 reads RB; 1 reads RC (the value stored by ST).
+* BSEL: 0 uses RD2; 1 uses the sign-extended 16-bit constant C.
+* WDSEL: 00 writes PC+4, 01 writes the ALU result, 10 writes memory data.
+* Wr enables memory writes; WERF_ requests a register-file write.
+* Branches and JMP write PC+4 to RC even when no branch is taken.
+* R31 write suppression is handled separately by the effective werf.
+* Z is 1 when RD1 is zero. ROM address = (Z << 6) | opcode.
+* Dont-care fields use 0. All invalid opcodes use the HALT word.
+* Fibonacci uses LD, ST, ADD, ADDC, SUBC, CMPLEC, BNE, and HALT.
+* Its CMOVE, MOVE, and BT macros assemble as ADDC, ADD, and BNE.
+* ALUFN follows Lab 6: ADD=000000, SUB=000001, AND=011000,
+* OR=011110, XOR=010110, SHL=100000, SHR=100001, SRA=100011,
+* CMPEQ=110011, CMPLT=110101, CMPLE=110111.
 *******************************************************************************
-Xcontrol  vdd  0  0  z opcode[5:0]  control[13:0]
-+ $memory width=14 nlocations=128 contents=(
-+   0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000
-+   0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000
-+   0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000
-+   0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000
-+   0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000
-+   0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000
-+   0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000
-+   0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000
-+
-+   0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000
-+   0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000
-+   0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000
-+   0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000
-+   0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000
-+   0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000
-+   0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000
-+   0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000 0b11000000000000
-+ )
+Xcontrol  vdd  0  0  z opcode[5:0]  control[13:0] // Read-only port: output on, clock/write off; address Z+opcode -> control.
++ $memory width=14 nlocations=128 contents=( // Store 128 control words, each 14 bits wide, in ascending address order.
++ // Z = 0: ROM addresses 0-63; opcodes 0x00-0x3F.
++   0b11000000000000         // 0x00 HALT: hold PC; memory and register writes off.
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b00011000000001         // 0x18 LD: PC+4; memory[RD1 + C] -> RC; ALUFN=ADD.
++   0b00110000000010         // 0x19 ST: PC+4; RC -> memory[RD1 + C]; Wr=1, WERF_=0.
++   0b11000000000000
++   0b10000000000001         // 0x1B JMP: jump to RD1 (word aligned); PC+4 -> RC; Wr=0.
++   0b11000000000000
++   0b00000000000001         // 0x1D BEQ: Z=0, continue at PC+4; PC+4 -> RC.
++   0b01000000000001         // 0x1E BNE: Z=0, branch to PC+4+4*C; PC+4 -> RC.
++   0b11000000000000
++   0b00000100000001         // 0x20 ADD: PC+4; RD1 + RD2 -> RC; ALUFN=000000.
++   0b00000100000101         // 0x21 SUB: PC+4; RD1 - RD2 -> RC; ALUFN=000001.
++   0b11000000000000
++   0b11000000000000
++   0b00000111001101         // 0x24 CMPEQ: PC+4; RD1 == RD2 -> RC; ALUFN=110011.
++   0b00000111010101         // 0x25 CMPLT: PC+4; RD1 < RD2 (signed) -> RC; ALUFN=110101.
++   0b00000111011101         // 0x26 CMPLE: PC+4; RD1 <= RD2 (signed) -> RC; ALUFN=110111.
++   0b11000000000000
++   0b00000101100001         // 0x28 AND: PC+4; RD1 AND RD2 -> RC; ALUFN=011000.
++   0b00000101111001         // 0x29 OR: PC+4; RD1 OR RD2 -> RC; ALUFN=011110.
++   0b00000101011001         // 0x2A XOR: PC+4; RD1 XOR RD2 -> RC; ALUFN=010110.
++   0b11000000000000
++   0b00000110000001         // 0x2C SHL: PC+4; RD1 << RD2[4:0] -> RC; ALUFN=100000.
++   0b00000110000101         // 0x2D SHR: PC+4; RD1 >> RD2[4:0] (logical) -> RC; ALUFN=100001.
++   0b00000110001101         // 0x2E SRA: PC+4; RD1 >> RD2[4:0] (arithmetic) -> RC; ALUFN=100011.
++   0b11000000000000
++   0b00010100000001         // 0x30 ADDC: PC+4; RD1 + C -> RC; ALUFN=000000.
++   0b00010100000101         // 0x31 SUBC: PC+4; RD1 - C -> RC; ALUFN=000001.
++   0b11000000000000
++   0b11000000000000
++   0b00010111001101         // 0x34 CMPEQC: PC+4; RD1 == C -> RC; ALUFN=110011.
++   0b00010111010101         // 0x35 CMPLTC: PC+4; RD1 < C (signed) -> RC; ALUFN=110101.
++   0b00010111011101         // 0x36 CMPLEC: PC+4; RD1 <= C (signed) -> RC; ALUFN=110111.
++   0b11000000000000
++   0b00010101100001         // 0x38 ANDC: PC+4; RD1 AND C -> RC; ALUFN=011000.
++   0b00010101111001         // 0x39 ORC: PC+4; RD1 OR C -> RC; ALUFN=011110.
++   0b00010101011001         // 0x3A XORC: PC+4; RD1 XOR C -> RC; ALUFN=010110.
++   0b11000000000000
++   0b00010110000001         // 0x3C SHLC: PC+4; RD1 << C[4:0] -> RC; ALUFN=100000.
++   0b00010110000101         // 0x3D SHRC: PC+4; RD1 >> C[4:0] (logical) -> RC; ALUFN=100001.
++   0b00010110001101         // 0x3E SRAC: PC+4; RD1 >> C[4:0] (arithmetic) -> RC; ALUFN=100011.
++   0b11000000000000
++ // Z = 1: ROM addresses 64-127; opcodes 0x00-0x3F.
++   0b11000000000000         // 0x00 HALT: hold PC; memory and register writes off.
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b00011000000001         // 0x18 LD: PC+4; memory[RD1 + C] -> RC; ALUFN=ADD.
++   0b00110000000010         // 0x19 ST: PC+4; RC -> memory[RD1 + C]; Wr=1, WERF_=0.
++   0b11000000000000
++   0b10000000000001         // 0x1B JMP: jump to RD1 (word aligned); PC+4 -> RC; Wr=0.
++   0b11000000000000
++   0b01000000000001         // 0x1D BEQ: Z=1, branch to PC+4+4*C; PC+4 -> RC.
++   0b00000000000001         // 0x1E BNE: Z=1, continue at PC+4; PC+4 -> RC.
++   0b11000000000000
++   0b00000100000001         // 0x20 ADD: PC+4; RD1 + RD2 -> RC; ALUFN=000000.
++   0b00000100000101         // 0x21 SUB: PC+4; RD1 - RD2 -> RC; ALUFN=000001.
++   0b11000000000000
++   0b11000000000000
++   0b00000111001101         // 0x24 CMPEQ: PC+4; RD1 == RD2 -> RC; ALUFN=110011.
++   0b00000111010101         // 0x25 CMPLT: PC+4; RD1 < RD2 (signed) -> RC; ALUFN=110101.
++   0b00000111011101         // 0x26 CMPLE: PC+4; RD1 <= RD2 (signed) -> RC; ALUFN=110111.
++   0b11000000000000
++   0b00000101100001         // 0x28 AND: PC+4; RD1 AND RD2 -> RC; ALUFN=011000.
++   0b00000101111001         // 0x29 OR: PC+4; RD1 OR RD2 -> RC; ALUFN=011110.
++   0b00000101011001         // 0x2A XOR: PC+4; RD1 XOR RD2 -> RC; ALUFN=010110.
++   0b11000000000000
++   0b00000110000001         // 0x2C SHL: PC+4; RD1 << RD2[4:0] -> RC; ALUFN=100000.
++   0b00000110000101         // 0x2D SHR: PC+4; RD1 >> RD2[4:0] (logical) -> RC; ALUFN=100001.
++   0b00000110001101         // 0x2E SRA: PC+4; RD1 >> RD2[4:0] (arithmetic) -> RC; ALUFN=100011.
++   0b11000000000000
++   0b00010100000001         // 0x30 ADDC: PC+4; RD1 + C -> RC; ALUFN=000000.
++   0b00010100000101         // 0x31 SUBC: PC+4; RD1 - C -> RC; ALUFN=000001.
++   0b11000000000000
++   0b11000000000000
++   0b00010111001101         // 0x34 CMPEQC: PC+4; RD1 == C -> RC; ALUFN=110011.
++   0b00010111010101         // 0x35 CMPLTC: PC+4; RD1 < C (signed) -> RC; ALUFN=110101.
++   0b00010111011101         // 0x36 CMPLEC: PC+4; RD1 <= C (signed) -> RC; ALUFN=110111.
++   0b11000000000000
++   0b00010101100001         // 0x38 ANDC: PC+4; RD1 AND C -> RC; ALUFN=011000.
++   0b00010101111001         // 0x39 ORC: PC+4; RD1 OR C -> RC; ALUFN=011110.
++   0b00010101011001         // 0x3A XORC: PC+4; RD1 XOR C -> RC; ALUFN=010110.
++   0b11000000000000
++   0b00010110000001         // 0x3C SHLC: PC+4; RD1 << C[4:0] -> RC; ALUFN=100000.
++   0b00010110000101         // 0x3D SHRC: PC+4; RD1 >> C[4:0] (logical) -> RC; ALUFN=100001.
++   0b00010110001101         // 0x3E SRAC: PC+4; RD1 >> C[4:0] (arithmetic) -> RC; ALUFN=100011.
++   0b11000000000000
++ )                          // End of the 128-word control ROM.
 
 *******************************************************************************
 * Helper subckt to facilitate multi-bit joins.
@@ -127,12 +260,19 @@ Xcontrol  vdd  0  0  z opcode[5:0]  control[13:0]
 * of the 14 bits of the control ROM's output. The bits are ordered as they
 * appear in the control logic diagram of your 50.01 slides.
 *******************************************************************************
+* Route the top two control bits to the next-PC selector.
 Xjcontrola control[13:12] pcsel[1:0] join
+* Select RB or RC as the second register-file read address.
 Xjcontrolb control11      ra2sel     join
+* Select the second register value or constant as ALU input B.
 Xjcontrolc control10      bsel       join
+* Select PC+4, the ALU result, or memory data for register writeback.
 Xjcontrold control[9:8]   wdsel[1:0] join
+* Send the six operation bits to the Lab 6 ALU.
 Xjcontrole control[7:2]   alufn[5:0] join
+* Enable a main-memory write only for ST.
 Xjcontrolf control1       wr         join
+* Request a register write; R31 protection supplies the effective werf.
 Xjcontrolg control0       werf_      join
 
 *******************************************************************************
@@ -205,6 +345,8 @@ Xjdisplayb wr_werf[1:0]     wr werf_               join
 .plot b(ra2_b_wdsel[3:0])
 .plot b(alufn[5:0])
 .plot b(wr_werf[1:0])
+* Show the effective register write enable after R31 protection.
+.plot b(werf)
 .plot sd(rd1_[31:0])
 .plot sd(rd2_[31:0])
 .plot sd(wd[31:0])
