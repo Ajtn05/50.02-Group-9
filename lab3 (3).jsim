@@ -1,0 +1,95 @@
+*******************************************************************************
+* LAB 3
+* Group 9
+* - Cabrera, Niles
+* - Nellas, Aldrin
+* - Tibayan, Rafael 
+*******************************************************************************
+
+.include "8clocks.jsim"
+.include "nominal.jsim"
+.include "stdcell.jsim"
+
+*******************************************************************************
+* SUBCIRCUIT 1: fa (full adder)
+*
+*   We'll define p = a XOR b so:
+*   sum = p XOR carry_in
+*   Then De Morgan to build the OR out of NANDs:
+*   carry = ab + p.carry_in = !( !(ab) . !(p.carry_in) )
+*
+*   Gate count: 5 (two XOR2, three NAND2)
+*
+*   Why we use XORs (built-in):
+*   Using XORs is much more efficient and simple, because it would only use 5 gates.
+*   Other solutions would require more:
+*   - A NAND-built XOR would require four NAND gates, so the two XORs become eight
+*   - An all-NAND or all-NOR full adder would require nine gates 
+*   
+*   According to ./stdcell.jsim though, a xor2 gate's size and propagation delay
+*   are 27 and 140ps respectively, while nand2's are 10 and 30ps; this means that
+*   a full-NAND circuit is actually faster than what we have, even though it uses more 
+*   gates. This is a noted tradeoff.
+*
+*   Moreover, we still use NANDs for the carry, because the carry is a plain AND-OR expression. 
+*
+*******************************************************************************
+.subckt fa a b carry_in sum carry
+    Xh1 a b p xor2             
+    Xh2 p carry_in sum xor2    
+    Xh3 a b nab nand2          
+    Xh4 p carry_in npc nand2    
+    Xh5 nab npc carry nand2    
+.ends
+
+*******************************************************************************
+* SUBCIRCUIT 2: add32 (32-bit ripple carry adder)
+*
+*   In one line, we chain 32 of our fa's, one per bit, each passing its carry up to the next.
+*
+*   Instead of writing 32 lines, we use JSim's iterated instantiation. If we hand 
+*   a device more signals than it has ports, JSim flattens the signal list, cuts it into as many chunks 
+*   as there are ports. It then makes one copy per slot, taking the i-th signal of every chunk.
+*   fa has 5 ports and we give it 160 signals, so we get 160/5 = 32 copies.
+*   Take note that a[31:0] expands as a31 down to a0, so copy #0 is bit 31 (the MSB) and copy #31 is bit 0 (the LSB).
+*
+*   The carry_in chunk is "c[30:0] cin0" and the carry chunk is "carry_out c[30:0]". Both are 32 signals, but
+*   the c's sit one slot apart, so the two chunks line up staggered and every fa's carry lands on
+*   the same wire the next fa reads as its carry_in. That offset lets us wire the ripple.
+*
+*   Gate count: 160 (32 fa's, so 64 XOR2 and 96 NAND2)
+*
+*   Delay explaination:
+*   Since each fa has to wait for the one below it, in the worst case the carry walks the entire chain. 
+*   According to ./stdcell.jsim, carry_in to carry costs two nand2's, so 60ps per stage, and 32 stages is roughly
+*   2ns. We see this in test cases i and j (0x00000001 + 0xFFFFFFFF), where only bit 0 makes its own
+*   carry and every bit above it merely passes it along, so it takes about 2ns to
+*   settle versus about 0.3ns for the other cases. A ripple carry adder's delay grows with size, and a carry 
+*   lookahead adder (the better alternative) exists to address that issue; we chose to build the former as
+*   specified in the specs (it's also the simplest).
+*   
+*******************************************************************************
+.subckt add32 a[31:0] b[31:0] cin0 sum[31:0] carry_out
+    Xf a[31:0] b[31:0] c[30:0] cin0 sum[31:0] carry_out c[30:0] fa
+.ends
+
+
+
+*******************************************************************************
+* INSTANTIATIONS
+*******************************************************************************
+
+Xsum a[31:0] b[31:0] 0 sum[31:0] carry_out add32
+
+
+*******************************************************************************
+* SIMULATION
+*******************************************************************************
+
+Wa a[31:0] nrz(0, 5, 20ns, 0ns, 0.001ns, 0.001ns) 0x00000000 0x55555555 0x00000000 0x55555555 0xFFFFFFFF 0xAAAAAAAA 0x00000000 0xAAAAAAAA 0x00000001 0xFFFFFFFF
+Wb b[31:0] nrz(0, 5, 20ns, 0ns, 0.001ns, 0.001ns) 0x00000000 0x00000000 0x55555555 0x55555555 0xFFFFFFFF 0x00000000 0xAAAAAAAA 0xAAAAAAAA 0xFFFFFFFF 0x00000001
+.tran 220ns
+.plot a[31:0] 
+.plot b[31:0]
+.plot sum[31:0] 
+.plot carry_out

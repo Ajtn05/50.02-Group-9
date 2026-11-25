@@ -1,0 +1,87 @@
+*******************************************************************************
+* LAB #2
+* Group 9
+* - Cabrera, Niles
+* - Nellas, Aldrin
+* - Tibayan, Rafael 
+*******************************************************************************
+
+.include "8clocks.jsim"
+.include "nominal.jsim"
+.include "stdcell.jsim"
+
+*******************************************************************************
+* SUBCIRCUIT 1: fx
+*
+*   OUT = AB + CDE + FG
+*   = !( !(AB + CDE + FG) )
+*   = !( !(AB) . !(CDE) . !(FG) )  
+*
+*   Gate count: 4 (two NAND2, two NAND3)
+*******************************************************************************
+.subckt fx a b c d e f g out
+    Xg1 a b nab nand2          
+    Xg2 c d e ncde nand3        
+    Xg3 f g nfg nand2           
+    Xg4 nab ncde nfg out nand3 
+.ends
+
+
+*******************************************************************************
+* SUBCIRCUIT 2: fa (full adder)
+*
+*   sum   = a XOR b XOR carry_in
+*   carry = ab + p.carry_in
+*
+*   We'll define p = a XOR b so:
+*   sum = p XOR carry_in
+*   Then De Morgan to build the OR out of NANDs:
+*   carry = ab + p.carry_in = !( !(ab) . !(p.carry_in) )
+*
+*   Gate count: 5 (two XOR2, three NAND2)
+*
+*   Why we use XORs (built-in):
+*   Using XORs is much more efficient and simple, because it would only use 5 gates.
+*   Other solutions would require more:
+*   - A NAND-built XOR would require four NAND gates, so the two XORs become eight
+*   - An all-NAND or all-NOR full adder would require nine gates 
+*   
+*   According to ./stdcell.jsim though, a xor2 gate's size and propagation delay
+*   are 27 and 140ps respectively, while nand2's are 10 and 30ps; this means that
+*   a full-NAND circuit is actually faster than we have, even though it uses more 
+*   gates. This is a noted tradeoff.
+*
+*   Moreover, we still use NANDs for the carry, because the carry is a plain AND-OR expression.  
+*******************************************************************************
+.subckt fa a b carry_in sum carry
+    Xh1 a b p xor2             
+    Xh2 p carry_in sum xor2    
+    Xh3 a b nab nand2          
+    Xh4 p carry_in npc nand2    
+    Xh5 nab npc carry nand2    
+.ends
+
+
+*******************************************************************************
+* INSTANTIATIONS
+*******************************************************************************
+Xmyfx clk1 clk2 clk3 clk4 clk5 clk6 clk7 out fx
+Xmyfa clk1 clk2 clk3 sum carry fa
+
+
+*******************************************************************************
+* SIMULATION
+*
+* Using 700ns since each clock added doubles progressively.
+*******************************************************************************
+.tran 700ns
+.plot clk1
+.plot clk2
+.plot clk3
+.plot clk4
+.plot clk5
+.plot clk6
+.plot clk7
+.plot out
+.plot sum
+.plot carry

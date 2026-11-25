@@ -1,0 +1,742 @@
+*******************************************************************************
+* LAB #9
+* Group 9 - Happie Squad
+* Cabrera, Niles
+* Nellas, Aldrin
+* Tibayan, Rafael
+*******************************************************************************
+
+.include "8clocks.jsim"
+.include "nominal.jsim"
+.include "stdcell.jsim"
+
+*******************************************************************************
+* Beta Processor
+*
+* Everything from here to alu32 is our Lab 6 ALU (with the Lab 4 adder and
+* the Lab 5 as32/cmp32), copied over unchanged. add32 is also reused for the
+* PC+4 and branch target adders.
+*******************************************************************************
+
+*******************************************************************************
+* Full adder (from lab 4)
+* sum   = a XOR b XOR carry_in
+* carry = a*b + (a XOR b)*carry_in, built as NAND(NAND(a,b), NAND(p,carry_in))
+*         because by De Morgan, a NAND of two NANDs is an OR of the two ANDs
+*******************************************************************************
+.subckt fa a b carry_in sum carry
+    Xh1 a b p xor2
+    Xh2 p carry_in sum xor2
+    Xh3 a b nab nand2
+    Xh4 p carry_in npc nand2
+    Xh5 nab npc carry nand2
+.ends
+
+*******************************************************************************
+* 32-bit ripple-carry adder (from lab 4)
+* Bit i takes its carry-in from bit i-1's carry-out; bit 0 takes cin0.
+* c[31:30] are exposed because as32 needs them for the overflow flag.
+*******************************************************************************
+.subckt add32 a[31:0] b[31:0] cin0 sum[31:0] c[31:30]
+    Xf a[31:0] b[31:0] c[30:0] cin0 sum[31:0] c[31:0] fa
+.ends
+
+*******************************************************************************
+* as32: 32-bit adder/subtractor
+* inputs:  a[31:0], b[31:0], op0 (0 = add, 1 = subtract)
+* outputs: fas[31:0], n, v, z
+*
+* Subtraction: a - b = a + (-b) = a + ~b + 1 (two's complement negation).
+* - 32 mux2s pick b when op0 = 0 and ~b when op0 = 1.
+* - op0 also drives add32's carry-in, so subtraction gets its "+1" for free
+*    and addition gets a carry-in of 0. Only one add32 is needed.
+*
+* n (negative): fas31 is the sign bit of a two's complement number, so the
+*   result is negative exactly when fas31 = 1. No gate is needed.
+*
+* v (signed overflow): c31 XOR c30. c30 is the carry into the sign bit and
+*   c31 is the carry out of it. They differ only when the true result does
+*   not fit in 32 bits (pos + pos gave a negative sign, or neg + neg gave a
+*   non-negative sign). When they agree, the sign bit is correct.
+*
+* z (zero): z = NOT(fas31 OR fas30 OR ... OR fas0), so z = 1 only when every
+*   bit is 0. stdcell gates have at most 4 inputs, so this is a 3-level tree
+*   built only from NOR/NAND gates:
+* - level 1: 8 nor4s,   each 1 when its 4 bits are all 0
+* - level 2: 2 nand4s,  each 1 when its 16-bit half has any nonzero bit
+* - level 3: 1 nor2,   1 when neither half has a nonzero bit
+*   This is the minimum possible: a gate merges at most 4 signals into 1, so
+*   reducing 32 signals to 1 takes at least ceil(31/3) = 11 gates, and at
+*   least 3 levels since two levels reach only 4 x 4 = 16 inputs.
+*******************************************************************************
+.subckt as32 a[31:0] b[31:0] op0 fas[31:0] n v z
+    Xinv b[31:0] b_inverse[31:0] inverter
+    Xmux op0#32 b[31:0] b_inverse[31:0] b_selected[31:0] mux2
+
+    Xadd a[31:0] b_selected[31:0] op0 fas[31:0] c31 c30 add32
+
+    .connect fas[31] n
+    Xv c30 c31 v xor2
+
+    Xza fas[31:28] za nor4
+    Xzb fas[27:24] zb nor4
+    Xzc fas[23:20] zc nor4
+    Xzd fas[19:16] zd nor4
+    Xze fas[15:12] ze nor4
+    Xzf fas[11:8]  zf nor4
+    Xzg fas[7:4]   zg nor4
+    Xzh fas[3:0]   zh nor4
+
+    Xupper za zb zc zd upper_nonzero nand4
+    Xlower ze zf zg zh lower_nonzero nand4
+
+    Xz upper_nonzero lower_nonzero z nor2
+.ends
+
+*******************************************************************************
+* cmp32: 32-bit comparator
+* inputs:  n, v, z from the as32 placed directly before it (computing a - b),
+*          op[2:1]
+* outputs: fcmp[31:0]; only fcmp0 carries the answer, fcmp[31:1] are ground
+*
+*   op2 op1 | fcmp0
+*    0   1  | 1 iff a = b
+*    1   0  | 1 iff a < b
+*    1   1  | 1 iff a <= b
+*
+*  - a = b:  a - b = 0, so check z.
+*  - a < b:  a - b < 0, so normally check n. But if the subtraction overflowed
+*         (v = 1), the sign bit came out flipped and n is wrong. XOR-ing with
+*         v undoes the flip: lt = n XOR v.
+*  - a <= b: (a < b) OR (a = b), so turning on both op bits ORs both checks.
+*
+* fcmp0 = op1*z + op2*lt. The AND-OR is built as NAND-NAND (De Morgan:
+* NAND(NAND(x,y), NAND(p,q)) = x*y + p*q), the same function with smaller,
+* faster gates than and2/or2
+*******************************************************************************
+.subckt cmp32 n v z op[2:1] fcmp[31:0]
+    .connect 0 fcmp[31:1]
+    Xlt n v lt xor2
+    Xeq op[1] z eq_n nand2
+    Xless op[2] lt lt_n nand2
+    Xresult eq_n lt_n fcmp[0] nand2
+.ends
+
+*******************************************************************************
+* bool32: 32-bit bitwise Boolean circuit
+* Each a/b bit-pair selects one of the four truth-table outputs in op.
+* mux4 port order: s0 s1 d0 d1 d2 d3 z.
+* With s0 = a_i and s1 = b_i, fbool_i = op[a_i + 2*b_i].
+*
+* op[3:0]: XOR = 0110, NAND = 0111, NOR = 0001, NOT B = 0011.
+* Other settings include AND = 1000, OR = 1110, A = 1010, NOT A = 0101.
+* The vector instance below expands into 32 parallel mux4 gates.
+* .connect shares each op bit across a bus of 32 mux data inputs.
+* These connections are wire aliases and add no gates.
+*******************************************************************************
+.subckt bool32 a[31:0] b[31:0] op[3:0] fbool[31:0]
+    .connect op[0] d0[31:0]
+    .connect op[1] d1[31:0]
+    .connect op[2] d2[31:0]
+    .connect op[3] d3[31:0]
+
+    Xbool a[31:0] b[31:0] d0[31:0] d1[31:0] d2[31:0] d3[31:0] fbool[31:0] mux4
+.ends
+
+*******************************************************************************
+* shift32: 32-bit shifter
+* inputs:   a[31:0], b[4:0] (shift amount), op[1:0] (00 = shift left, 01 = shift right, 11 = arithmetic shift right)
+* output:   fshift[31:0]
+*
+* Left shifts reuse the right shifter: reverse a, shift right, reverse back. Xrev and Xout are
+*   the two reversal rows (select = op0), so one right
+*   shifter serves all three operations and no second shifter is needed.
+*
+* fill = op1 AND a31 is the bit shifted in at the top:
+*   a31 for SRA, and 0 for SHR and SHL (op1 = 0 for both).
+*
+* Shift by 16 and 8 (b4, b3) is one 4-way stage instead of two mux2 rows:
+* - b4 b3 are decoded into one-hot enables e0, e8, e16, e24 (exactly one is 1), and
+*   y8[i] = x[i]*e0 + x[i+8]*e8 + x[i+16]*e16 + x[i+24]*e24,
+*   built as NAND-NAND (Xt* rows, then Xy* rows).
+* - When i+k > 31 the source is the fill bit.
+*   That term is the same for a whole group of bits, so it is built once (ng24, ng16, ng8).
+*   Bits 8-31 then cost 20-47 microns^2 each instead of 54 for 2 mux2s.
+* - Reversed bits x0-x7 are used only once, so each reversal mux and its NAND
+*   merge into one aoi21 + and2 (Xer, Xel, Xu, Xt0l).
+*   That is why Xrev only builds x[31:8].
+*
+* Shift by 4, 2, 1 (b2, b1, b0) are ordinary mux2 rows. The 4 fill bits of the
+*   shift-by-4 row use a NAND pair with a shared fill term (Xg4, Xp4, Xq4),
+*   which is smaller than a mux2.
+*
+* Size: 5616 microns^2, against 6061 for a plain all-mux2 cascade
+*******************************************************************************
+.subckt shift32 a[31:0] b[4:0] op[1:0] fshift[31:0]
+    Xrev op[0]#24 a[0:23] a[31:8] x[31:8] mux2
+    Xfill op[1] a[31] fill and2
+
+    Xi16 b[4] nb16 inverter
+    Xi8 b[3] nb8 inverter
+    Xe0 b[4] b[3] e0 nor2
+    Xe8 b[4] nb8 e8 nor2
+    Xe16 nb16 b[3] e16 nor2
+    Xe24 nb16 nb8 e24 nor2
+    Xg24 fill e24 ng24 nand2
+    Xg16 fill b[4] ng16 nand2
+    Xg8 b[4] b[3] fill ng8 oai21
+    Xer op[0] e0 er and2
+    Xel op[0] b[4] b[3] el nor3
+
+    Xu a[24:31] el#8 u[7:0] and2
+    Xt0l a[7:0] er#8 u[7:0] t0[7:0] aoi21
+    Xt0 x[31:8] e0#24 t0[31:8] nand2
+    Xt8 x[31:8] e8#24 t8[23:0] nand2
+    Xt16 x[31:16] e16#16 t16[15:0] nand2
+    Xt24 x[31:24] e24#8 t24[7:0] nand2
+
+    Xy0 t0[7:0] t8[7:0] t16[7:0] t24[7:0] y8[7:0] nand4
+    Xy8 t0[15:8] t8[15:8] t16[15:8] ng24#8 y8[15:8] nand4
+    Xy16 t0[23:16] t8[23:16] ng16#8 y8[23:16] nand3
+    Xy24 t0[31:24] ng8#8 y8[31:24] nand2
+
+    Xs4 b[2]#28 y8[27:0] y8[31:4] y4[27:0] mux2
+    Xi4 b[2] nb4 inverter
+    Xg4 b[2] fill ng4 nand2
+    Xp4 y8[31:28] nb4#4 p4[31:28] nand2
+    Xq4 p4[31:28] ng4#4 y4[31:28] nand2
+
+    Xs2 b[1]#32 y4[31:0] fill#2 y4[31:2] y2[31:0] mux2
+    Xs1 b[0]#32 y2[31:0] fill y2[31:1] y1[31:0] mux2
+
+    Xout op[0]#32 y1[0:31] y1[31:0] fshift[31:0] mux2
+.ends
+
+*******************************************************************************
+* alu32: 32-bit ALU
+* inputs:  a[31:0], b[31:0], alufn[5:0]
+* output:  f[31:0]
+*
+* All four units compute in parallel, and alufn[5:4] picks the result:
+*   00 = as32, 01 = bool32, 10 = shift32, 11 = cmp32.
+* - as32 gets alufn0. Every compare code (x011, x101, x111) has alufn0 = 1,
+* so as32 computes a - b and its n, v, z feed cmp32 directly.
+* - cmp32 gets alufn[2:1], and shift32 gets alufn[1:0].
+*
+* The output is selected without mux4s (one-hot AND-OR built as NAND-NAND):
+* - eas = 1 only when alufn[5:4] = 00, and esh = 1 only when it is 10.
+* - f[i] = NAND3(NAND(fas_i, eas), NAND(fshift_i, esh), nfbool_i)
+*   = fas_i*eas + fshift_i*esh + (bool result, in bool mode only)
+* - bool32's op is bop[k] = NAND3(alufn[k], ~alufn5, alufn4), not alufn[k].
+*   In bool mode bop = ~alufn[3:0], so bool32 outputs the inverted result, which is
+*   the inverted term the final NAND needs.
+*   In every other mode bop = 1111, so bool32 outputs all 1s and drops out.
+*   Four gates do the gating for all 32 bits.
+* - In compare mode every term is off, so f[31:1] = 0 automatically.
+*   f0 adds a fourth term, NAND3(fcmp0, alufn5, alufn4), through a nand4.
+*
+* Size: the select logic is 1155 microns^2, against 2112 for 32 mux4s
+*   Whole ALU: 13043 microns^2 (14445 with the slide hints taken literally)
+* Speed: the critical path is b0 -> as32 carry chain -> zero detect -> cmp32 -> f0, 5.002 ns
+*   The select adds only two NAND levels (0.14 ns) after cmp32.
+*   With 32 mux4s the same path is 5.065 ns
+*******************************************************************************
+.subckt alu32 a[31:0] b[31:0] alufn[5:0] f[31:0]
+    Xas a[31:0] b[31:0] alufn[0] fas[31:0] n v z as32
+    Xcmp n v z alufn[2:1] fcmp[31:0] cmp32
+    Xbool a[31:0] b[31:0] bop[3:0] nfbool[31:0] bool32
+    Xshift a[31:0] b[4:0] alufn[1:0] fshift[31:0] shift32
+
+    Xn5 alufn[5] n5 inverter
+    Xeas alufn[5] alufn[4] eas nor2
+    Xesh n5 alufn[4] esh nor2
+    Xbop alufn[3:0] n5#4 alufn[4]#4 bop[3:0] nand3
+
+    Xtas fas[31:0] eas#32 tas[31:0] nand2
+    Xtsh fshift[31:0] esh#32 tsh[31:0] nand2
+    Xtcmp fcmp[0] alufn[5] alufn[4] tcmp nand3
+    Xf tas[31:1] tsh[31:1] nfbool[31:1] f[31:1] nand3
+    Xf0 tas[0] tsh[0] nfbool[0] tcmp f[0] nand4
+.ends
+
+*******************************************************************************
+* Helper subckt to facilitate multi-bit joins.
+*******************************************************************************
+.subckt join S T
+  .connect S T
+.ends
+
+*******************************************************************************
+* CLOCK
+* Everything that stores something (PC, register file, main memory) uses
+* the same clk, and it all updates on the rising edge.
+* clk2 has a 20ns period, first rising edge at ~10ns, then 30ns, 50ns, ...
+* Each memory read (Xmemory, Xregisters, Xcontrol) takes about 2ns in JSim,
+* so the slowest instructions are LD and the ALU ops with a long carry chain:
+*   pc -> instruction -> register read -> ALU -> (memory read for LD) -> wd
+* The latest we saw wd settle was ~14.6ns after the edge (a CMPEQ where the
+* subtract carries through all 32 bits), so it's ready before the next edge
+* at 20ns. clk1 (10ns) is too fast, LD data isn't ready in time and X gets
+* written. clk3 also works, just slower.
+* To change the clock speed just change clk2 here.
+*******************************************************************************
+Xjclk clk2 clk join
+
+*******************************************************************************
+* RESET LOGIC
+* At the start the PC, Wr and WERF are all undefined (X). An undefined PC
+* means nothing runs, and an undefined Wr/WERF could write garbage into
+* memory or the registers. So like in Lab 4, these three go through reset
+* muxes (mux2 with s = reset, d1 = 0):
+*   - PC gets 0 at the first rising edge, so the program starts at 0x000
+*   - Wr and WERF are forced to 0 while reset is on, so nothing is written
+* reset is 1 from 0ns until 22ns. That covers the first rising edge of clk2
+* (~10ns) and goes back to 0 before the next one (30ns), then stays 0.
+* (We used 22ns instead of something like 12ns so it still works if the
+* clock is switched to clk3, whose first rising edge is at ~20ns.)
+*******************************************************************************
+Wreset reset nrz(0, 5, 22ns, 0ns, 0.01ns, 0.01ns)
++ 1 0
+
+*******************************************************************************
+* PROGRAM COUNTER (PC)
+* pc[31:2] are 30 dregs clocked by clk. pc[1:0] are always 0 since
+* instructions are 4 bytes and always word aligned (the "00" in the slide).
+* PC+4: pc + 4 using the Lab 4 add32 (b = 0x00000004, carry in = 0).
+* pcinc is used as the PCSEL 0 input and also written to RC (WDSEL 0) for
+* JMP, BEQ and BNE.
+*******************************************************************************
+Xpc npc[31:2] clk#30 pc[31:2] dreg
+.connect 0 pc[1:0]
+Xpcinc pc[31:0] 0#29 vdd 0#2 0 pcinc[31:0] pcinc_c[31:30] add32
+
+*******************************************************************************
+* BRANCH TARGET (PC + 4 + 4*C) for BEQ/BNE
+* C is sign-extended and shifted left by 2 (times 4) before adding:
+*   4*SEXT(C) = c15 copied 14 times, then c[15:0], then 00
+* The C in BEQ/BNE is already the offset in words from PC+4 (the assembler
+* computes it), so this gives the address of the label.
+*******************************************************************************
+Xbt pcinc[31:0] c15#14 c[15:0] 0#2 0 bt[31:0] bt_c[31:30] add32
+
+*******************************************************************************
+* JUMP TARGET (JT) for JMP
+* JT is just RD1 (the value in register RA) with the low 2 bits cleared, so
+* it is always word aligned. Since pc[1:0] are always 0, the PCSEL mux only
+* needs rd1_[31:2] (no extra gates).
+*******************************************************************************
+
+*******************************************************************************
+* PCSEL MUX + PC reset mux
+* mux4 picks d[s1 s0] so d0..d3 line up with the PCSEL values:
+*   00 = PC+4, 01 = branch target, 10 = JT, 11 = current PC (stays the same,
+*   this is how HALT and invalid opcodes stop the Beta)
+* Then the reset mux puts 0 into the PC while reset = 1.
+*******************************************************************************
+Xpcsel pcsel0#30 pcsel1#30 pcinc[31:2] bt[31:2] rd1_[31:2] pc[31:2] pcmux[31:2] mux4
+Xpcrst reset#30 pcmux[31:2] 0#30 npc[31:2] mux2
+
+*******************************************************************************
+* The $memory statement defines a memory device. Each memory device comes with
+* one or more ports, each of which may be used for either reading or writing.
+*
+* Usage:
+*   Xid  <port def>
+*   +    <port def>
+*   +    ...
+*   + $memory width=<w> nlocations=<n> [file="<x.bin>" | contents=(<c c c>...)]
+*
+* <port def> is in the format "<oe> <clk> <wen> <addr[...]> <data[...]>"
+*
+* w     = the number of data lines (normally 32 in a 32-bit processor)
+* n     = the number of memory locations (addresses) in this memory device
+* x.bin = any .bin file that defines the initial contents of the memory
+*         (must be in the same directory as JSim)
+* c c c = defines the initial contents of the memory in an _inline_ manner
+*         (i.e., not in an external file)
+* oe    = "output enable", enables the memory device to output to the data
+*         lines; this must be ON for read ports and OFF for write ports
+* clk   = a clock input, needed for write ports; the data is written during a
+*         rising edge
+* wen   = "write enable", must be ON whenever we want to write to a write port
+* addr  = a set of lines that contains the address to be accessed by the port
+* data  = a set of lines that contains the data to be output (for read ports)
+*         or the data to be written into memory (for write ports)
+*
+* The number of addr lines provided must be equal to ceiling(log2(nlocations)).
+* The number of data lines provided must be equal to width.
+*
+* Note that if nlocations is not a power of 2, trying to address a non-existent
+* memory location will result in an invalid read! Example: if nlocations=31
+* instead of 32 and addr=0b11111 (31), the output of the device is undefined!
+*******************************************************************************
+
+*******************************************************************************
+* Xmemory is a 512-byte main memory containing both user instructions and data.
+*   1st line = read port for the next instruction to process (inst)
+*   2nd line = read port for LD instructions (memrd)
+*   3rd line = write port for ST instructions (memwd, controlled by wr signal)
+*   5th line = the memory statement itself
+*
+* Lab 7 program used: Problem 2 - Fibonacci Sequence (lab-7/part2.uasm)
+*   lab7.bin is BSim's "UASM to .bin" output for part2.uasm, renamed and put
+*   in the same folder as this file.
+*   The .bin is 604 bytes since FIBO reserves 47 words (up to 0x25C), but this
+*   memory is only 512 bytes so pc[8:2] only reaches 0x000-0x1FC. That still
+*   has all the code (0x000-0x037), INPUT (0x19C) and the first 24 FIBO words.
+*
+* Lab 9: the instruction read port now uses the real pc, and LD/ST use the
+* ALU output as the address. Only bits [8:2] are used, so anything past
+* 0x1FC wraps around to 0x000.
+*******************************************************************************
+Xmemory  vdd  0    0   pc[8:2]    inst[31:0]
++        vdd  0    0   mema[8:2]  memrd[31:0]
++        0    clk  wr  mema[8:2]  memwd[31:0]
++ $memory width=32 nlocations=128 file="lab7.bin"
+
+* LD/ST address is RD1 + C, which is the ALU output (ALUFN = ADD, BSEL = 1)
+Xjmema aluf[8:0] mema[8:0] join
+* ST stores RD2, and RA2SEL = 1 makes RD2 the value of RC
+Xjmemwd rd2_[31:0] memwd[31:0] join
+
+*******************************************************************************
+* Also connect our instruction signal lines to our opcode, rc, ra, rb, and c.
+*******************************************************************************
+Xjinsta inst[31:26] opcode[5:0] join
+Xjinstb inst[25:21] rc[4:0]     join
+Xjinstc inst[20:16] ra[4:0]     join
+Xjinstd inst[15:11] rb[4:0]     join
+Xjinste inst[15:0]  c[15:0]     join
+
+*******************************************************************************
+* Xcontrol is a read-only memory (ROM) that defines what to feed into the
+* control signal lines of your final Beta circuit, depending on what opcode
+* was read from your instruction memory (along with an additional signal "z"
+* signifying the evaluation result of a BEQ or BNE instruction).
+*   1st line = read port w/ 7 address lines (z + 6-bit opcode) + 14 data lines
+*   2nd line = the memory statement itself
+*   succeeding lines = the control signals (14 bits each) for all 64 opcodes
+*                      times 2 (first half is for z = 0, second half for z = 1)
+*
+* Each word is: PCSEL(2) RA2SEL BSEL WDSEL(2) ALUFN(6) Wr WERF_
+*   PCSEL   00 = PC+4, 01 = PC+4+4*C (branch), 10 = RD1 (JMP), 11 = same PC
+*   RA2SEL  0 = RB, 1 = RC (only for ST, since it stores the value in RC)
+*   BSEL    0 = RD2, 1 = C (sign-extended)
+*   WDSEL   00 = PC+4, 01 = ALU output, 10 = memory read data (LD)
+*   Wr      1 = write to memory (ST only)
+*   WERF_   1 = write to register RC (goes through the R31 check first)
+* ALUFN is the same as our Lab 6 ALU:
+*   ADD = 000000, SUB = 000001, AND = 011000, OR = 011110, XOR = 010110,
+*   SHL = 100000, SHR = 100001, SRA = 100011,
+*   CMPEQ = 110011, CMPLT = 110101, CMPLE = 110111
+* The constant versions (ADDC, SUBC, ...) are opcode + 0x10 and only change
+* BSEL to 1. Don't care fields are just set to 0.
+* JMP, BEQ and BNE always write PC+4 to RC, taken or not. (The BEQ/BNE macros
+* use R31 as RC by default, so that write just gets blocked.)
+*
+* Why is there a z input? (guide question a)
+*   For BEQ and BNE the next PC depends on whether RD1 is 0, and that's only
+*   known while the program runs, not from the opcode. The ROM can only look
+*   at its address lines, so z (1 when RD1 = 0) is added as the top address
+*   bit. z = 0 reads addresses 0-63 and z = 1 reads 64-127. Both halves are
+*   the same except for the PCSEL of BEQ and BNE:
+*     BEQ: z = 0 -> 00 (PC+4), z = 1 -> 01 (branch)
+*     BNE: z = 0 -> 01 (branch), z = 1 -> 00 (PC+4)
+*
+* Why 0b11000000000000 for invalid instructions? (guide question b)
+*   That's PCSEL = 11 with everything else 0. In this datapath PCSEL = 11
+*   just feeds the current PC back in, so the Beta stays stuck on that
+*   instruction (basically a HALT). Wr = 0 and WERF_ = 0 so nothing gets
+*   written to memory or the registers. A bad opcode stops the CPU safely
+*   instead of doing something random with garbage control signals.
+*   Opcode 0 (HALT, also what empty memory reads as) uses the same word.
+*
+* Lab 9: the ROM is the same as Lab 8. z now comes from the NOR gate on rd1_
+* (see below) instead of being tied to 0.
+*******************************************************************************
+Xcontrol  vdd  0  0  z opcode[5:0]  control[13:0] // address = z + opcode
++ $memory width=14 nlocations=128 contents=(
++ // z = 0 (addresses 0-63)
++   0b11000000000000         // 0x00 HALT (unlabeled = invalid, same word)
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b00011000000001         // 0x18 LD   RC <- Mem[RA + C]
++   0b00110000000010         // 0x19 ST   Mem[RA + C] <- RC
++   0b11000000000000
++   0b10000000000001         // 0x1B JMP  PC <- RA, RC <- PC+4
++   0b11000000000000
++   0b00000000000001         // 0x1D BEQ  z = 0, not taken
++   0b01000000000001         // 0x1E BNE  z = 0, taken
++   0b11000000000000
++   0b00000100000001         // 0x20 ADD  (reg-reg ALU ops start here)
++   0b00000100000101         // 0x21 SUB
++   0b11000000000000
++   0b11000000000000
++   0b00000111001101         // 0x24 CMPEQ
++   0b00000111010101         // 0x25 CMPLT
++   0b00000111011101         // 0x26 CMPLE
++   0b11000000000000
++   0b00000101100001         // 0x28 AND
++   0b00000101111001         // 0x29 OR
++   0b00000101011001         // 0x2A XOR
++   0b11000000000000
++   0b00000110000001         // 0x2C SHL
++   0b00000110000101         // 0x2D SHR
++   0b00000110001101         // 0x2E SRA
++   0b11000000000000
++   0b00010100000001         // 0x30 ADDC (constant versions, BSEL = 1)
++   0b00010100000101         // 0x31 SUBC
++   0b11000000000000
++   0b11000000000000
++   0b00010111001101         // 0x34 CMPEQC
++   0b00010111010101         // 0x35 CMPLTC
++   0b00010111011101         // 0x36 CMPLEC
++   0b11000000000000
++   0b00010101100001         // 0x38 ANDC
++   0b00010101111001         // 0x39 ORC
++   0b00010101011001         // 0x3A XORC
++   0b11000000000000
++   0b00010110000001         // 0x3C SHLC
++   0b00010110000101         // 0x3D SHRC
++   0b00010110001101         // 0x3E SRAC
++   0b11000000000000
++ // z = 1 (addresses 64-127), same as above except BEQ and BNE
++   0b11000000000000         // 0x00 HALT
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b11000000000000
++   0b00011000000001         // 0x18 LD
++   0b00110000000010         // 0x19 ST
++   0b11000000000000
++   0b10000000000001         // 0x1B JMP
++   0b11000000000000
++   0b01000000000001         // 0x1D BEQ  z = 1, taken
++   0b00000000000001         // 0x1E BNE  z = 1, not taken
++   0b11000000000000
++   0b00000100000001         // 0x20 ADD
++   0b00000100000101         // 0x21 SUB
++   0b11000000000000
++   0b11000000000000
++   0b00000111001101         // 0x24 CMPEQ
++   0b00000111010101         // 0x25 CMPLT
++   0b00000111011101         // 0x26 CMPLE
++   0b11000000000000
++   0b00000101100001         // 0x28 AND
++   0b00000101111001         // 0x29 OR
++   0b00000101011001         // 0x2A XOR
++   0b11000000000000
++   0b00000110000001         // 0x2C SHL
++   0b00000110000101         // 0x2D SHR
++   0b00000110001101         // 0x2E SRA
++   0b11000000000000
++   0b00010100000001         // 0x30 ADDC
++   0b00010100000101         // 0x31 SUBC
++   0b11000000000000
++   0b11000000000000
++   0b00010111001101         // 0x34 CMPEQC
++   0b00010111010101         // 0x35 CMPLTC
++   0b00010111011101         // 0x36 CMPLEC
++   0b11000000000000
++   0b00010101100001         // 0x38 ANDC
++   0b00010101111001         // 0x39 ORC
++   0b00010101011001         // 0x3A XORC
++   0b11000000000000
++   0b00010110000001         // 0x3C SHLC
++   0b00010110000101         // 0x3D SHRC
++   0b00010110001101         // 0x3E SRAC
++   0b11000000000000
++ )
+
+*******************************************************************************
+* The following .connect statements define what control signal goes to which
+* of the 14 bits of the control ROM's output. The bits are ordered as they
+* appear in the control logic diagram of your 50.01 slides.
+* (Same order as the ROM words above. werf_ is only what the ROM asks for,
+* the actual werf comes out of the R31 circuit near Xregisters.)
+* Lab 9: the ROM's Wr bit is called wr_ here. It goes through the reset mux
+* below to become the wr that Xmemory uses (werf_ also gets one, see the R31
+* section).
+*******************************************************************************
+Xjcontrola control[13:12] pcsel[1:0] join
+Xjcontrolb control11      ra2sel     join
+Xjcontrolc control10      bsel       join
+Xjcontrold control[9:8]   wdsel[1:0] join
+Xjcontrole control[7:2]   alufn[5:0] join
+Xjcontrolf control1       wr_        join
+Xjcontrolg control0       werf_      join
+
+* Wr reset mux: no memory writes while reset = 1
+Xwrrst reset wr_ 0 wr mux2
+
+*******************************************************************************
+* Xregisters is a register memory device to store your Beta registers r0 - r31.
+*   1st line = read port for rd1_
+*   2nd line = read port for rd2_
+*   3rd line = write port for wd (controlled by werf signal)
+*   4th line = the memory statement itself
+*   succeeding lines = initial values of the registers
+*******************************************************************************
+Xregisters  vdd  0    0     ra1_[4:0]  rd1_[31:0]
++           vdd  0    0     ra2_[4:0]  rd2_[31:0]
++           0    clk  werf  wa[4:0]    wd[31:0]
++ $memory width=32 nlocations=32 contents=(
++   0 0 0 0 0 0 0 0
++   0 0 0 0 0 0 0 0
++   0 0 0 0 0 0 0 0
++   0 0 0 0 0 0 0 0
++ )
+
+* first read address is always ra, and the write address is always rc
+Xjra1 ra[4:0] ra1_[4:0] join
+Xjwa  rc[4:0] wa[4:0]   join
+
+*******************************************************************************
+* RA2SEL MUX
+* 0 = rb (normal ALU ops), 1 = rc (ST, so RD2 is the value being stored)
+*******************************************************************************
+Xra2sel ra2sel#5 rb[4:0] rc[4:0] ra2_[4:0] mux2
+
+*******************************************************************************
+* R31 always has to be 0, so any register write to wa[4:0] = 0b11111 is
+* blocked:
+*   werf = werf_ AND NOT(wa4 AND wa3 AND wa2 AND wa1 AND wa0)
+* All the registers start at 0 (see Xregisters above), so if nothing can
+* write to R31 it just stays 0.
+*******************************************************************************
+* upper_ones = 1 when wa4-wa1 are all 1
+Xupper wa[4:1] upper_ones and4
+* allow_write = 0 only for wa = 11111 (R31), 1 for R0-R30
+Xallowed upper_ones wa[0] allow_write nand2
+* werf_ only goes through if the destination isn't R31
+Xwerf werf_ allow_write werf_ok and2
+* WERF reset mux: no register writes while reset = 1
+Xwerfrst reset werf_ok 0 werf mux2
+
+*******************************************************************************
+* NOR GATE FOR Z
+* z = 1 when RD1 is all zeros, i.e. a 32-input NOR. stdcell gates only go up
+* to 4 inputs so it's a tree (same idea as the zero flag in our as32):
+*   8 nor4s  -> zq_i = 1 when bits i, i+8, i+16, i+24 are all 0
+*   2 nand4s -> 1 when that half has a nonzero bit
+*   1 nor2   -> 1 when neither half has a nonzero bit
+* z goes into the control ROM address (BEQ/BNE use it to pick PCSEL).
+*******************************************************************************
+Xzq rd1_[31:24] rd1_[23:16] rd1_[15:8] rd1_[7:0] zq[7:0] nor4
+Xznzh zq[7:4] nonzero_hi nand4
+Xznzl zq[3:0] nonzero_lo nand4
+Xz nonzero_hi nonzero_lo z nor2
+
+*******************************************************************************
+* BSEL MUX
+* 0 = RD2, 1 = SEXT(C) (c15 copied into the upper 16 bits)
+*******************************************************************************
+Xbsel bsel#32 rd2_[31:0] c15#16 c[15:0] alub[31:0] mux2
+
+*******************************************************************************
+* ALU (alu32 from Lab 6): A = RD1, B = BSEL mux output
+*******************************************************************************
+Xalu rd1_[31:0] alub[31:0] alufn[5:0] aluf[31:0] alu32
+
+*******************************************************************************
+* WDSEL MUX
+* 00 = PC+4 (JMP/BEQ/BNE save the return address in RC)
+* 01 = ALU output (all ALU ops)
+* 10 = memory read data (LD)
+* 11 is never used by the ROM, so it's just 0
+*******************************************************************************
+Xwdsel wdsel0#32 wdsel1#32 pcinc[31:0] aluf[31:0] memrd[31:0] 0#32 wd[31:0] mux4
+
+*******************************************************************************
+* Plot some signals together (or else we won't have enough space in the plot
+* window)
+*******************************************************************************
+Xjdisplaya ra2_b_wdsel[3:0] ra2sel bsel wdsel[1:0] join
+Xjdisplayb wr_werf[1:0]     wr werf                join
+
+*******************************************************************************
+* This section plots the following signals in order:
+* - clk and reset (Lab 9)
+* - pc (program counter)
+* - beta operation mnemonic (taken from the 6-bit opcode header)
+* - ra, rb, rc (taken from the rest of the instruction opcode)
+* - c (taken from the last 16 bits of the instruction opcode)
+* - z (Lab 9, output of the NOR gate on rd1_)
+* - control signals (i.e., output of the control logic)
+* - rd1_ (result of reading address ra1_)
+* - rd2_ (result of reading address ra2_)
+* - aluf (Lab 9, ALU output)
+* - wd (value being written to address wa -- but only if werf is 1)
+* - mema (address to access in main memory)
+* - memrd (result of reading address mema)
+* - memwd (value being written to address mema -- but only if wr is 1)
+*
+* Each instruction takes one clk2 cycle and its results get saved at the
+* next rising edge. Once the program reaches HALT, pc stops changing.
+* When pc reaches HALT with clk2 (it stays there after that):
+*   sample lab7.uasm (array sum)      ~550ns
+*   our part1 (odd/even sums)         ~1230ns
+*   our part2 (Fibonacci)             ~1110ns  <- the lab7.bin in our folder
+*   our part3 (sorting)               ~4550ns  (make .tran ~5000ns for this)
+*******************************************************************************
+.tran 1500ns
+.plot clk
+.plot reset
+.plot x(pc[31:0])
+.plot betaop(opcode[5:0])
+.plot d(ra[4:0])
+.plot d(rb[4:0])
+.plot d(rc[4:0])
+.plot sd(c[15:0])
+.plot z
+.plot b(pcsel[1:0])
+.plot b(ra2_b_wdsel[3:0])
+.plot b(alufn[5:0])
+.plot b(wr_werf[1:0])
+.plot sd(rd1_[31:0])
+.plot sd(rd2_[31:0])
+.plot sd(aluf[31:0])
+.plot sd(wd[31:0])
+.plot x(mema[8:0])
+.plot sd(memrd[31:0])
+.plot sd(memwd[31:0])
